@@ -287,7 +287,15 @@ service cloud.firestore {
         && incoming().diff(existing()).affectedKeys().hasOnly(['read', 'emailStatus'])
         && incoming().createdAt == existing().createdAt;
 
-      allow delete: if isAdmin() && isValidId(notifId);
+      allow delete: if isValidId(notifId) && (
+        isAdmin()
+        || (
+          isVerifiedSignedIn()
+          && resource != null
+          && existing().type == 'like'
+          && existing().actorUid == request.auth.uid
+        )
+      );
     }
 
     // Users (PII protected)

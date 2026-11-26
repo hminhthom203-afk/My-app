@@ -66,6 +66,10 @@ function slugId(raw: string): string {
   return `${base || 'item'}-${Date.now().toString(36)}`;
 }
 
+function buildLikeNotifId(uid: string, charId: string): string {
+  return `like_${uid}_${charId}`.slice(0, 128);
+}
+
 export default function App() {
   const [view, setView] = useState<AppView>('intro');
   const [selectedCharId, setSelectedCharId] = useState<string | null>(null);
@@ -486,35 +490,21 @@ export default function App() {
     [characters, selectedCharId]
   );
 
+  const unreadNotificationsCount = useMemo(
+    () => notifications.filter((n) => !n.read).length,
+    [notifications]
+  );
+
   const notifyAdmin = async (
     type: 'like' | 'comment',
     character: Character,
     message: string
   ) => {
     if (!currentUser) return;
-    let emailStatus: AdminNotification['emailStatus'] = 'not_configured';
-    try {
-      const resp = await fetch('/api/notify-admin', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          type,
-          characterName: character.name,
-          actorName: currentUser.name,
-          message,
-        }),
-      });
-      if (resp.ok) {
-        const data = (await resp.json()) as { status?: AdminNotification['emailStatus'] };
-        if (data.status === 'sent' || data.status === 'queued') {
-          emailStatus = data.status;
-        }
-      }
-    } catch {
-      // keep fallback status
-    }
-
-    const notifId = `notif-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const notifId =
+      type === 'like'
+        ? buildLikeNotifId(currentUser.uid, character.id)
+        : `notif-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const path = `notifications/${notifId}`;
     try {
       await setDoc(doc(db, path), {
@@ -525,12 +515,27 @@ export default function App() {
         actorName: currentUser.name.slice(0, 80),
         message: message.slice(0, 600),
         recipientEmail: ADMIN_EMAIL,
-        emailStatus,
+        emailStatus: 'not_configured',
         read: false,
         createdAt: serverTimestamp(),
       });
     } catch (err) {
       handleFirestoreError(err, OperationType.CREATE, path);
+    }
+
+    try {
+      await fetch('/api/notify-admin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type,
+          characterName: character.name,
+          actorName: currentUser.name,
+          message,
+        }),
+      });
+    } catch {
+      // ignore email webhook failure
     }
   };
 
@@ -664,7 +669,15 @@ export default function App() {
         return next;
       });
 
-      if (!alreadyLiked && targetChar) {
+      if (alreadyLiked) {
+        try {
+          await deleteDoc(
+            doc(db, 'notifications', buildLikeNotifId(currentUser.uid, charId))
+          );
+        } catch {
+          // Ignore if no matching notification exists
+        }
+      } else if (targetChar) {
         void notifyAdmin(
           'like',
           targetChar,
@@ -905,6 +918,23 @@ export default function App() {
     }
   };
 
+  const handleMarkAllNotificationsRead = async () => {
+    const unread = notifications.filter((n) => !n.read);
+    if (unread.length === 0) return;
+    try {
+      for (let i = 0; i < unread.length; i += 450) {
+        const chunk = unread.slice(i, i + 450);
+        const batch = writeBatch(db);
+        chunk.forEach((n) => {
+          batch.update(doc(db, 'notifications', n.id), { read: true });
+        });
+        await batch.commit();
+      }
+    } catch (err) {
+      handleFirestoreError(err, OperationType.UPDATE, 'notifications');
+    }
+  };
+
   const handleDeleteNotification = async (id: string) => {
     const path = `notifications/${id}`;
     try {
@@ -968,13 +998,18 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => handleNavigate('admin')}
-                className={`cursor-pointer transition-colors whitespace-nowrap shrink-0 hover:text-[#3A071F] ${
+                className={`inline-flex cursor-pointer items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 hover:text-[#3A071F] ${
                   view === 'admin'
                     ? 'text-[#3A071F] underline decoration-[#B65A7C] decoration-2 underline-offset-4'
                     : ''
                 }`}
               >
-                Quản Trị
+                <span>Quản Trị</span>
+                {unreadNotificationsCount > 0 && (
+                  <span className="rounded-full bg-[#6F1F3B] px-2 py-0.5 text-[11px] font-bold text-[#FFF0F5] tabular-nums">
+                    {unreadNotificationsCount} mới
+                  </span>
+                )}
               </button>
             )}
           </nav>
@@ -1059,13 +1094,18 @@ export default function App() {
             <button
               type="button"
               onClick={() => handleNavigate('admin')}
-              className={`cursor-pointer whitespace-nowrap ${
+              className={`inline-flex cursor-pointer items-center gap-1 whitespace-nowrap ${
                 view === 'admin'
                   ? 'text-[#3A071F] underline decoration-[#B65A7C] decoration-2 underline-offset-4'
                   : ''
               }`}
             >
-              Quản Trị
+              <span>Quản Trị</span>
+              {unreadNotificationsCount > 0 && (
+                <span className="rounded-full bg-[#6F1F3B] px-1.5 py-0.5 text-[10px] font-bold text-[#FFF0F5] tabular-nums">
+                  {unreadNotificationsCount}
+                </span>
+              )}
             </button>
           )}
         </nav>
@@ -1291,6 +1331,7 @@ export default function App() {
             onDeleteTrack={handleDeleteTrack}
             onDeleteAllTracks={handleDeleteAllTracks}
             onMarkNotificationRead={handleMarkNotificationRead}
+            onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
             onDeleteNotification={handleDeleteNotification}
             onSeedDefaults={handleSeedDefaults}
           />

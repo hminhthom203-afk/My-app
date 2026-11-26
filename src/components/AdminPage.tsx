@@ -56,6 +56,7 @@ interface AdminPageProps {
   onDeleteTrack: (id: string) => Promise<void>;
   onDeleteAllTracks: () => Promise<void>;
   onMarkNotificationRead: (id: string) => Promise<void>;
+  onMarkAllNotificationsRead: () => Promise<void>;
   onDeleteNotification: (id: string) => Promise<void>;
   onSeedDefaults: () => Promise<void>;
 }
@@ -106,6 +107,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   onDeleteTrack,
   onDeleteAllTracks,
   onMarkNotificationRead,
+  onMarkAllNotificationsRead,
   onDeleteNotification,
   onSeedDefaults,
 }) => {
@@ -339,7 +341,10 @@ export const AdminPage: React.FC<AdminPageProps> = ({
 
             <button
               type="button"
-              onClick={() => setTab('notifications')}
+              onClick={() => {
+                setTab('notifications');
+                void onMarkAllNotificationsRead();
+              }}
               className={`inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap ${
                 tab === 'notifications'
                   ? 'bg-[#6F1F3B] text-[#FFF0F5]'

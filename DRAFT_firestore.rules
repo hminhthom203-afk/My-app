@@ -28,10 +28,7 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isVerifiedSignedIn() && (
-        request.auth.token.email == 'hminhthom203@gmail.com' ||
-        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
-      );
+      return isVerifiedSignedIn() && request.auth.token.email == 'hminhthom203@gmail.com';
     }
 
     function isValidCharacter(data) {
@@ -99,6 +96,27 @@ service cloud.firestore {
       && data.updatedAt is timestamp;
     }
 
+    function isValidNotification(data) {
+      return data.keys().hasAll([
+        'type', 'characterId', 'characterName', 'actorUid', 'actorName',
+        'message', 'recipientEmail', 'emailStatus', 'read', 'createdAt'
+      ])
+      && data.keys().hasOnly([
+        'type', 'characterId', 'characterName', 'actorUid', 'actorName',
+        'message', 'recipientEmail', 'emailStatus', 'read', 'createdAt'
+      ])
+      && data.type in ['like', 'comment']
+      && isValidId(data.characterId)
+      && data.characterName is string && data.characterName.size() >= 1 && data.characterName.size() <= 80
+      && data.actorUid is string && data.actorUid == request.auth.uid
+      && data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 80
+      && data.message is string && data.message.size() >= 1 && data.message.size() <= 600
+      && data.recipientEmail is string && data.recipientEmail == 'hminhthom203@gmail.com'
+      && data.emailStatus in ['sent', 'queued', 'not_configured']
+      && data.read is bool
+      && data.createdAt is timestamp;
+    }
+
     function isValidUser(data, userId) {
       return data.keys().hasAll(['uid', 'name', 'email', 'role', 'createdAt', 'updatedAt'])
       && data.keys().hasOnly(['uid', 'name', 'email', 'role', 'createdAt', 'updatedAt'])
@@ -129,7 +147,6 @@ service cloud.firestore {
         && incoming().updatedAt == request.time;
 
       allow update: if isValidId(charId) && isValidCharacter(incoming()) && (
-        // Action 1: Admin edits character fields
         (
           isAdmin()
           && incoming().diff(existing()).affectedKeys().hasOnly([
@@ -141,7 +158,6 @@ service cloud.firestore {
           && incoming().updatedAt == request.time
         )
         ||
-        // Action 2: Verified user atomically likes (+1) or unlikes (-1)
         (
           isVerifiedSignedIn()
           && incoming().diff(existing()).affectedKeys().hasOnly(['likesCount', 'updatedAt'])
@@ -164,7 +180,6 @@ service cloud.firestore {
           )
         )
         ||
-        // Action 3: Detail page view increment (+1)
         (
           incoming().diff(existing()).affectedKeys().hasOnly(['viewsCount'])
           && incoming().createdAt == existing().createdAt
@@ -252,6 +267,35 @@ service cloud.firestore {
         && incoming().updatedAt == request.time;
 
       allow delete: if isAdmin() && isValidId(trackId);
+    }
+
+    // Admin Notifications
+    match /notifications/{notifId} {
+      allow get: if isAdmin() && isValidId(notifId);
+      allow list: if isAdmin();
+
+      allow create: if isVerifiedSignedIn()
+        && isValidId(notifId)
+        && isValidNotification(incoming())
+        && incoming().read == false
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/characters/$(incoming().characterId));
+
+      allow update: if isAdmin()
+        && isValidId(notifId)
+        && isValidNotification(incoming())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['read', 'emailStatus'])
+        && incoming().createdAt == existing().createdAt;
+
+      allow delete: if isValidId(notifId) && (
+        isAdmin()
+        || (
+          isVerifiedSignedIn()
+          && resource != null
+          && existing().type == 'like'
+          && existing().actorUid == request.auth.uid
+        )
+      );
     }
 
     // Users (PII protected)
