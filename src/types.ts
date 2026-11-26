@@ -1,4 +1,4 @@
-export type AppView = 'intro' | 'gallery' | 'detail' | 'music' | 'admin';
+export type AppView = 'intro' | 'gallery' | 'top' | 'detail' | 'music' | 'admin';
 
 export interface CharacterComment {
   id: string;

@@ -27,6 +27,8 @@ import {
   AlertCircle,
   X,
   MailWarning,
+  MessageCircle,
+  Crown,
 } from 'lucide-react';
 import {
   AdminNotification,
@@ -83,6 +85,8 @@ export default function App() {
   const [comments, setComments] = useState<CharacterComment[]>([]);
   const [notifications, setNotifications] = useState<AdminNotification[]>([]);
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
+  const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
+  const [previousListView, setPreviousListView] = useState<'gallery' | 'top'>('gallery');
 
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -408,6 +412,32 @@ export default function App() {
     return () => unsub();
   }, [view, selectedCharId]);
 
+  // 8. Listen to comment counts for all characters in real-time
+  useEffect(() => {
+    if (characters.length === 0) {
+      setCommentCounts({});
+      return;
+    }
+    const unsubs = characters.map((c) => {
+      const path = `characters/${c.id}/comments`;
+      return onSnapshot(
+        collection(db, path),
+        (snap) => {
+          setCommentCounts((prev) => ({
+            ...prev,
+            [c.id]: snap.size,
+          }));
+        },
+        () => {
+          // ignore offline error
+        }
+      );
+    });
+    return () => {
+      unsubs.forEach((unsub) => unsub());
+    };
+  }, [characters]);
+
   const pickNextTrack = (
     list: MusicTrack[],
     activeId: string,
@@ -488,6 +518,16 @@ export default function App() {
     });
   }, [characters, searchQuery, activeHashtag]);
 
+  const topCharacters = useMemo(() => {
+    return [...characters]
+      .sort((a, b) => {
+        const diffLikes = (b.likesCount ?? 0) - (a.likesCount ?? 0);
+        if (diffLikes !== 0) return diffLikes;
+        return (b.viewsCount ?? 0) - (a.viewsCount ?? 0);
+      })
+      .slice(0, 5);
+  }, [characters]);
+
   const selectedCharacter = useMemo(
     () => characters.find((c) => c.id === selectedCharId) || null,
     [characters, selectedCharId]
@@ -543,21 +583,25 @@ export default function App() {
   };
 
   const handleEnterFromIntro = () => {
-    soundEngine.unlock();
-    soundEngine.playSparkle();
-    const first =
-      tracks.find((t) => t.id === currentTrackId) ||
-      (isShuffle && tracks.length > 1
-        ? tracks[Math.floor(Math.random() * tracks.length)]
-        : tracks[0]);
-    if (first && !isPlayingMusic) {
-      soundEngine.playTrack(first);
-      setCurrentTrackId(first.id);
-      setIsPlayingMusic(true);
-      setHasAutoStarted(true);
-    }
     setView('gallery');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    try {
+      soundEngine.unlock();
+      soundEngine.playSparkle();
+      const first =
+        tracks.find((t) => t.id === currentTrackId) ||
+        (isShuffle && tracks.length > 1
+          ? tracks[Math.floor(Math.random() * tracks.length)]
+          : tracks[0]);
+      if (first && !isPlayingMusic) {
+        soundEngine.playTrack(first);
+        setCurrentTrackId(first.id);
+        setIsPlayingMusic(true);
+        setHasAutoStarted(true);
+      }
+    } catch {
+      // ignore audio playback failure
+    }
   };
 
   const handleNavigate = (nextView: AppView) => {
@@ -567,6 +611,9 @@ export default function App() {
   };
 
   const handleOpenDetail = async (charId: string) => {
+    if (view === 'gallery' || view === 'top') {
+      setPreviousListView(view);
+    }
     soundEngine.playPageTurn();
     setActionError(null);
     setSelectedCharId(charId);
@@ -1057,7 +1104,6 @@ export default function App() {
   if (view === 'intro') {
     return (
       <div className="relative min-h-screen w-full max-w-full overflow-x-hidden">
-        <PetalCanvas variant="intro" />
         <IntroPage onEnter={handleEnterFromIntro} />
       </div>
     );
@@ -1086,12 +1132,24 @@ export default function App() {
               type="button"
               onClick={() => handleNavigate('gallery')}
               className={`cursor-pointer transition-colors whitespace-nowrap shrink-0 hover:text-[#3A071F] ${
-                view === 'gallery' || view === 'detail'
+                view === 'gallery' || (view === 'detail' && previousListView === 'gallery')
                   ? 'text-[#3A071F] underline decoration-[#B65A7C] decoration-2 underline-offset-4'
                   : ''
               }`}
             >
               Nhân Vật
+            </button>
+            <button
+              type="button"
+              onClick={() => handleNavigate('top')}
+              title="Top nhân vật được yêu thích nhất"
+              className={`cursor-pointer transition-colors whitespace-nowrap shrink-0 hover:text-[#3A071F] ${
+                view === 'top' || (view === 'detail' && previousListView === 'top')
+                  ? 'text-[#3A071F] underline decoration-[#B65A7C] decoration-2 underline-offset-4'
+                  : ''
+              }`}
+            >
+              Top Yêu Thích
             </button>
             <button
               type="button"
@@ -1182,12 +1240,24 @@ export default function App() {
             type="button"
             onClick={() => handleNavigate('gallery')}
             className={`cursor-pointer whitespace-nowrap ${
-              view === 'gallery' || view === 'detail'
+              view === 'gallery' || (view === 'detail' && previousListView === 'gallery')
                 ? 'text-[#3A071F] underline decoration-[#B65A7C] decoration-2 underline-offset-4'
                 : ''
             }`}
           >
             Nhân Vật
+          </button>
+          <button
+            type="button"
+            onClick={() => handleNavigate('top')}
+            title="Top nhân vật được yêu thích nhất"
+            className={`cursor-pointer whitespace-nowrap ${
+              view === 'top' || (view === 'detail' && previousListView === 'top')
+                ? 'text-[#3A071F] underline decoration-[#B65A7C] decoration-2 underline-offset-4'
+                : ''
+            }`}
+          >
+            Top Yêu Thích
           </button>
           <button
             type="button"
@@ -1356,7 +1426,7 @@ export default function App() {
                         </p>
 
                         <div className="mt-auto flex w-full items-center justify-between border-t border-[#E2A6BA]/45 pt-4 text-xs font-semibold text-[#6F1F3B]">
-                          <div className="flex items-center gap-4">
+                          <div className="flex items-center gap-3.5">
                             <button
                               type="button"
                               onClick={() => void handleToggleLike(char.id)}
@@ -1373,10 +1443,150 @@ export default function App() {
                               <span className="tabular-nums">{char.likesCount}</span>
                             </button>
 
-                            <span className="inline-flex items-center gap-1.5 text-[#6F1F3B]/80">
+                            <span className="inline-flex items-center gap-1.5 text-[#6F1F3B]/80" title="Lượt xem">
                               <Eye className="h-4 w-4 text-[#B65A7C]" />
                               <span className="tabular-nums">{char.viewsCount}</span>
                             </span>
+
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenDetail(char.id)}
+                              aria-label={`Xem ${commentCounts[char.id] ?? 0} bình luận`}
+                              title="Bình luận"
+                              className="inline-flex min-h-[36px] cursor-pointer items-center gap-1 text-[#6F1F3B]/80 transition-transform hover:scale-105 hover:text-[#3A071F]"
+                            >
+                              <MessageCircle className="h-4 w-4 text-[#B65A7C]" />
+                              <span className="tabular-nums">{commentCounts[char.id] ?? 0}</span>
+                            </button>
+                          </div>
+
+                          <button
+                            type="button"
+                            onClick={() => void handleOpenDetail(char.id)}
+                            className="min-h-[36px] cursor-pointer rounded-full bg-[#6F1F3B] px-4 py-1.5 text-xs font-bold text-[#FFF0F5] transition-colors hover:bg-[#3A071F]"
+                          >
+                            Chi tiết
+                          </button>
+                        </div>
+                      </article>
+                    </Tilt3DCard>
+                  );
+                })}
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {view === 'top' && (
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+            className="mx-auto max-w-6xl px-4 pb-28 sm:px-6"
+          >
+            <div className="mb-8 text-center">
+              <h1 className="font-cute text-2xl font-bold tracking-tight text-[#3A071F] sm:text-3xl">
+                Top Nhân Vật Được Yêu Thích Nhất
+              </h1>
+            </div>
+
+            {loadingChars ? (
+              <div className="flex justify-center py-20">
+                <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#B65A7C]/30 border-t-[#6F1F3B]" />
+              </div>
+            ) : topCharacters.length === 0 ? (
+              <div className="rounded-3xl border border-[#B65A7C]/25 bg-[#FFF0F5]/80 p-12 text-center text-[#6F1F3B] shadow-sm">
+                <p className="text-sm font-semibold">Chưa có nhân vật nào trong danh sách.</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                {topCharacters.map((char, index) => {
+                  const isLiked = likedIds.has(char.id);
+                  const rank = index + 1;
+
+                  return (
+                    <Tilt3DCard
+                      key={char.id}
+                      onHoverSound={() => soundEngine.playHoverTick()}
+                      className="group"
+                    >
+                      <article className="relative flex h-full flex-col items-center rounded-3xl border border-[#B65A7C]/25 bg-[#FFF0F5]/88 p-6 text-center shadow-[0_14px_38px_-14px_rgba(111,31,59,0.2)] backdrop-blur-md transition-shadow duration-200 hover:shadow-[0_22px_48px_-12px_rgba(111,31,59,0.32)]">
+                        {/* Rank Badge */}
+                        <div className="absolute top-4 left-4 z-10">
+                          <span
+                            className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-black shadow-sm ${
+                              rank === 1
+                                ? 'bg-gradient-to-r from-amber-400 via-rose-300 to-amber-500 text-[#3A071F]'
+                                : rank === 2
+                                ? 'bg-gradient-to-r from-slate-200 to-slate-300 text-[#3A071F]'
+                                : rank === 3
+                                ? 'bg-gradient-to-r from-amber-600 to-amber-700 text-white'
+                                : 'bg-[#6F1F3B]/10 text-[#6F1F3B]'
+                            }`}
+                          >
+                            {rank === 1 && <Crown className="h-3.5 w-3.5 fill-[#3A071F] text-[#3A071F]" />}
+                            <span>#{rank}</span>
+                          </span>
+                        </div>
+
+                        <div className="mb-5 transition-transform duration-300 group-hover:-translate-y-1">
+                          <AvatarFrame src={char.avatar} alt={char.name} size="md" />
+                        </div>
+
+                        <div className="mb-1.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-xs font-semibold text-[#B65A7C]">
+                          {char.hashtags.slice(0, 3).map((tag, idx) => (
+                            <React.Fragment key={tag}>
+                              <span>#{tag.replace(/^#/, '')}</span>
+                              {idx < Math.min(char.hashtags.length, 3) - 1 && (
+                                <span aria-hidden="true" className="opacity-50">
+                                  ·
+                                </span>
+                              )}
+                            </React.Fragment>
+                          ))}
+                        </div>
+
+                        <h2 className="font-cute mb-2 text-xl font-bold text-[#3A071F]">
+                          {char.name}
+                        </h2>
+
+                        <p className="mb-5 line-clamp-2 text-sm leading-relaxed text-[#6F1F3B]/90">
+                          “{char.slogan}”
+                        </p>
+
+                        <div className="mt-auto flex w-full items-center justify-between border-t border-[#E2A6BA]/45 pt-4 text-xs font-semibold text-[#6F1F3B]">
+                          <div className="flex items-center gap-3.5">
+                            <button
+                              type="button"
+                              onClick={() => void handleToggleLike(char.id)}
+                              aria-label={`Thả tim cho ${char.name}`}
+                              className="inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 transition-transform hover:scale-105"
+                            >
+                              <Heart
+                                className={`h-4 w-4 ${
+                                  isLiked
+                                    ? 'fill-[#6F1F3B] text-[#6F1F3B]'
+                                    : 'text-[#B65A7C]'
+                                }`}
+                              />
+                              <span className="tabular-nums">{char.likesCount}</span>
+                            </button>
+
+                            <span className="inline-flex items-center gap-1.5 text-[#6F1F3B]/80" title="Lượt xem">
+                              <Eye className="h-4 w-4 text-[#B65A7C]" />
+                              <span className="tabular-nums">{char.viewsCount}</span>
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenDetail(char.id)}
+                              aria-label={`Xem ${commentCounts[char.id] ?? 0} bình luận`}
+                              title="Bình luận"
+                              className="inline-flex min-h-[36px] cursor-pointer items-center gap-1 text-[#6F1F3B]/80 transition-transform hover:scale-105 hover:text-[#3A071F]"
+                            >
+                              <MessageCircle className="h-4 w-4 text-[#B65A7C]" />
+                              <span className="tabular-nums">{commentCounts[char.id] ?? 0}</span>
+                            </button>
                           </div>
 
                           <button
@@ -1402,7 +1612,7 @@ export default function App() {
             comments={comments}
             isLiked={likedIds.has(selectedCharacter.id)}
             currentUser={currentUser}
-            onBack={() => handleNavigate('gallery')}
+            onBack={() => handleNavigate(previousListView)}
             onToggleLike={handleToggleLike}
             onAddComment={handleAddComment}
             onUpdateComment={handleUpdateComment}

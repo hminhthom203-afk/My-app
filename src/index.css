@@ -8,6 +8,7 @@
   --color-ivory-bloom: #FFF0F5;
   --font-display: "Playpen Sans", "Quicksand", cursive, sans-serif;
   --font-body: "Quicksand", sans-serif;
+  --font-artistic: "Dancing Script", "Caveat", cursive, sans-serif;
 }
 
 @layer base {
@@ -22,6 +23,10 @@
 
   h1, h2, h3, .font-cute {
     font-family: var(--font-display);
+  }
+
+  .font-artistic {
+    font-family: var(--font-artistic);
   }
 }
 
