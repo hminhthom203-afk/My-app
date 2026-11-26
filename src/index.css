@@ -1,0 +1,78 @@
+@import "tailwindcss";
+
+@theme {
+  --color-rose-ink: #3A071F;
+  --color-blush-wine: #6F1F3B;
+  --color-petal-dust: #B65A7C;
+  --color-powder-rose: #E2A6BA;
+  --color-ivory-bloom: #FFF0F5;
+  --font-display: "Playpen Sans", "Quicksand", cursive, sans-serif;
+  --font-body: "Quicksand", sans-serif;
+}
+
+@layer base {
+  html,
+  body {
+    max-width: 100%;
+    overflow-x: hidden;
+    font-family: var(--font-body);
+    color: #3A071F;
+    background-color: #FFF0F5;
+  }
+
+  h1, h2, h3, .font-cute {
+    font-family: var(--font-display);
+  }
+}
+
+/* Soft 3D gentle levitation */
+@keyframes gentle-float-3d {
+  0%, 100% {
+    transform: translate3d(0, 0px, 0) rotateX(0deg) rotateY(0deg);
+  }
+  50% {
+    transform: translate3d(0, -6px, 8px) rotateX(1.5deg) rotateY(-1.5deg);
+  }
+}
+
+@keyframes slow-aura-pulse {
+  0%, 100% {
+    opacity: 0.55;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.04);
+  }
+}
+
+.animate-float-3d {
+  animation: gentle-float-3d 6s ease-in-out infinite;
+  transform-style: preserve-3d;
+}
+
+.animate-aura {
+  animation: slow-aura-pulse 8s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-float-3d,
+  .animate-aura {
+    animation: none !important;
+  }
+}
+
+/* Custom subtle rose scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #FFF0F5;
+}
+::-webkit-scrollbar-thumb {
+  background: #E2A6BA;
+  border-radius: 999px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #B65A7C;
+}

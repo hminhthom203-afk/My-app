@@ -1,0 +1,324 @@
+{
+  "entities": {
+    "Character": {
+      "title": "Character",
+      "description": "A character profile in the Ăn Kẹo Hong showcase.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Character display name."
+        },
+        "avatar": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200000,
+          "description": "Character avatar URL or compressed image data URL."
+        },
+        "hashtags": {
+          "type": "array",
+          "description": "Up to 10 hashtags for the character."
+        },
+        "slogan": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "description": "Character signature slogan."
+        },
+        "story": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 5000,
+          "description": "Full backstory and lore."
+        },
+        "link": {
+          "type": "string",
+          "maxLength": 500,
+          "description": "External reference URL."
+        },
+        "linkLabel": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Display label for external link."
+        },
+        "likesCount": {
+          "type": "integer",
+          "description": "Total number of hearts."
+        },
+        "viewsCount": {
+          "type": "integer",
+          "description": "Total number of detail views."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Creation server timestamp."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Last update server timestamp."
+        }
+      },
+      "required": [
+        "name",
+        "avatar",
+        "hashtags",
+        "slogan",
+        "story",
+        "link",
+        "linkLabel",
+        "likesCount",
+        "viewsCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "CharacterLike": {
+      "title": "CharacterLike",
+      "description": "Single heart record per user per character.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "createdAt"]
+    },
+    "CharacterComment": {
+      "title": "CharacterComment",
+      "description": "Public comment left on a character by a verified user.",
+      "type": "object",
+      "properties": {
+        "characterId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "characterId",
+        "authorUid",
+        "authorName",
+        "content",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "MusicTrack": {
+      "title": "MusicTrack",
+      "description": "Background music track in the Ăn Kẹo Hong music box.",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "artist": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "mood": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "durationLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 50
+        },
+        "audioUrl": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "synthPreset": {
+          "type": "string",
+          "enum": ["rose_waltz", "cotton_lullaby", "velvet_nocturne", "petal_breeze"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "title",
+        "artist",
+        "mood",
+        "durationLabel",
+        "audioUrl",
+        "synthPreset",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminNotification": {
+      "title": "AdminNotification",
+      "description": "Notification sent when a user likes or comments on a character.",
+      "type": "object",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["like", "comment"]
+        },
+        "characterId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "characterName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "actorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "actorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600
+        },
+        "recipientEmail": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        },
+        "emailStatus": {
+          "type": "string",
+          "enum": ["sent", "queued", "not_configured"]
+        },
+        "read": {
+          "type": "boolean"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "type",
+        "characterId",
+        "characterName",
+        "actorUid",
+        "actorName",
+        "message",
+        "recipientEmail",
+        "emailStatus",
+        "read",
+        "createdAt"
+      ]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private user account record stored in Firestore.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "maxLength": 160
+        },
+        "role": {
+          "type": "string",
+          "enum": ["viewer"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "name", "email", "role", "createdAt", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/characters/{charId}": {
+      "schema": { "$ref": "#/entities/Character" },
+      "description": "Public character profiles managed by admin, with atomic likesCount and viewsCount."
+    },
+    "/characters/{charId}/likes/{userId}": {
+      "schema": { "$ref": "#/entities/CharacterLike" },
+      "description": "Per-user heart document ensuring max one heart per user per character."
+    },
+    "/characters/{charId}/comments/{commentId}": {
+      "schema": { "$ref": "#/entities/CharacterComment" },
+      "description": "Comments on a character editable/deletable by their author or admin."
+    },
+    "/tracks/{trackId}": {
+      "schema": { "$ref": "#/entities/MusicTrack" },
+      "description": "Music playlist tracks managed by admin."
+    },
+    "/notifications/{notifId}": {
+      "schema": { "$ref": "#/entities/AdminNotification" },
+      "description": "Admin inbox notifications for hearts and comments."
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "User profile documents restricted to owner and admin."
+    }
+  }
+}

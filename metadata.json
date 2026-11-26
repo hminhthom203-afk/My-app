@@ -1,0 +1,6 @@
+{
+  "name": "Ăn Kẹo Hong",
+  "description": "Thế giới tổng hợp nhân vật huyền ảo với âm nhạc dịu êm, cánh hoa bay phấp phới và không gian tương tác ngọt ngào.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
