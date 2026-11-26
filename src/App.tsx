@@ -16,7 +16,17 @@ import {
   updateDoc,
   writeBatch,
 } from 'firebase/firestore';
-import { Heart, Eye, Search, LogOut, ShieldCheck, User } from 'lucide-react';
+import {
+  Heart,
+  Eye,
+  Search,
+  LogOut,
+  ShieldCheck,
+  User,
+  AlertCircle,
+  X,
+  MailWarning,
+} from 'lucide-react';
 import {
   AdminNotification,
   AppView,
@@ -70,63 +80,105 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authReady, setAuthReady] = useState(false);
   const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
   const [activeHashtag, setActiveHashtag] = useState<string>('all');
 
   const [currentTrackId, setCurrentTrackId] = useState<string>('');
   const [isPlayingMusic, setIsPlayingMusic] = useState(false);
+  const [isShuffle, setIsShuffle] = useState(false);
   const [musicVolume, setMusicVolume] = useState(0.45);
   const [sfxEnabled, setSfxEnabled] = useState(true);
   const [hasAutoStarted, setHasAutoStarted] = useState(false);
 
   const cleanedSampleTracksRef = useRef(false);
+  const tracksRef = useRef<MusicTrack[]>([]);
+  const currentTrackIdRef = useRef<string>('');
+  const isShuffleRef = useRef<boolean>(false);
+
+  useEffect(() => {
+    tracksRef.current = tracks;
+  }, [tracks]);
+
+  useEffect(() => {
+    currentTrackIdRef.current = currentTrackId;
+  }, [currentTrackId]);
+
+  useEffect(() => {
+    isShuffleRef.current = isShuffle;
+  }, [isShuffle]);
+
+  const reportActionFailure = (
+    err: unknown,
+    operationType: OperationType,
+    path: string,
+    friendlyMessage: string
+  ) => {
+    setActionError(friendlyMessage);
+    try {
+      handleFirestoreError(err, operationType, path);
+    } catch {
+      // Structured FirestoreErrorInfo already logged to console by handleFirestoreError
+    }
+  };
+
+  const syncFirebaseUser = async (fbUser: typeof auth.currentUser) => {
+    if (!fbUser) {
+      setCurrentUser(null);
+      setLikedIds(new Set());
+      setNotifications([]);
+      setAuthReady(true);
+      return;
+    }
+    const email = (fbUser.email || '').toLowerCase();
+    const isAdmin = email === ADMIN_EMAIL && fbUser.emailVerified;
+    const safeName =
+      (fbUser.displayName || '').trim() || email.split('@')[0] || 'Thành viên';
+    const profile: UserProfile = {
+      uid: fbUser.uid,
+      name: safeName,
+      email,
+      emailVerified: fbUser.emailVerified,
+      role: isAdmin ? 'admin' : 'viewer',
+    };
+    setCurrentUser(profile);
+    setAuthReady(true);
+
+    if (fbUser.emailVerified && !isAdmin) {
+      const userRef = doc(db, 'users', fbUser.uid);
+      try {
+        const snap = await getDoc(userRef);
+        if (!snap.exists()) {
+          await setDoc(userRef, {
+            uid: fbUser.uid,
+            name: profile.name.slice(0, 80),
+            email: profile.email.slice(0, 160),
+            role: 'viewer',
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+          });
+        } else {
+          await updateDoc(userRef, {
+            name: profile.name.slice(0, 80),
+            updatedAt: serverTimestamp(),
+          });
+        }
+      } catch (err) {
+        reportActionFailure(
+          err,
+          OperationType.WRITE,
+          `users/${fbUser.uid}`,
+          'Không thể đồng bộ hồ sơ tài khoản lên Firebase.'
+        );
+      }
+    }
+  };
 
   // 1. Firebase Auth listener
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (fbUser) => {
-      if (!fbUser) {
-        setCurrentUser(null);
-        setLikedIds(new Set());
-        setNotifications([]);
-        setAuthReady(true);
-        return;
-      }
-      const email = (fbUser.email || '').toLowerCase();
-      const isAdmin = email === ADMIN_EMAIL && fbUser.emailVerified;
-      const profile: UserProfile = {
-        uid: fbUser.uid,
-        name: fbUser.displayName || email.split('@')[0] || 'Thành viên',
-        email,
-        emailVerified: fbUser.emailVerified,
-        role: isAdmin ? 'admin' : 'viewer',
-      };
-      setCurrentUser(profile);
-      setAuthReady(true);
-
-      if (fbUser.emailVerified && !isAdmin) {
-        const userRef = doc(db, 'users', fbUser.uid);
-        try {
-          const snap = await getDoc(userRef);
-          if (!snap.exists()) {
-            await setDoc(userRef, {
-              uid: fbUser.uid,
-              name: profile.name.slice(0, 80),
-              email: profile.email.slice(0, 160),
-              role: 'viewer',
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp(),
-            });
-          } else {
-            await updateDoc(userRef, {
-              name: profile.name.slice(0, 80),
-              updatedAt: serverTimestamp(),
-            });
-          }
-        } catch (err) {
-          handleFirestoreError(err, OperationType.WRITE, `users/${fbUser.uid}`);
-        }
-      }
+    const unsub = onAuthStateChanged(auth, (fbUser) => {
+      void syncFirebaseUser(fbUser);
     });
     return () => unsub();
   }, []);
@@ -349,12 +401,48 @@ export default function App() {
     return () => unsub();
   }, [view, selectedCharId]);
 
+  const pickNextTrack = (
+    list: MusicTrack[],
+    activeId: string,
+    shuffle: boolean
+  ): MusicTrack | null => {
+    if (list.length === 0) return null;
+    if (shuffle && list.length > 1) {
+      const candidates = list.filter((t) => t.id !== activeId);
+      if (candidates.length > 0) {
+        return candidates[Math.floor(Math.random() * candidates.length)];
+      }
+    }
+    const idx = list.findIndex((t) => t.id === activeId);
+    return list[(idx + 1) % list.length];
+  };
+
+  useEffect(() => {
+    soundEngine.setOnTrackEnded(() => {
+      const list = tracksRef.current;
+      const next = pickNextTrack(list, currentTrackIdRef.current, isShuffleRef.current);
+      if (!next) {
+        setIsPlayingMusic(false);
+        return;
+      }
+      setCurrentTrackId(next.id);
+      soundEngine.playTrack(next);
+      setIsPlayingMusic(true);
+    });
+    return () => soundEngine.setOnTrackEnded(null);
+  }, []);
+
   // First-click autoplay
   useEffect(() => {
     if (hasAutoStarted) return;
     const handleFirstPointer = () => {
       if (hasAutoStarted) return;
-      const firstTrack = tracks.find((t) => t.id === currentTrackId) || tracks[0];
+      const list = tracksRef.current;
+      const firstTrack =
+        list.find((t) => t.id === currentTrackId) ||
+        (isShuffleRef.current && list.length > 1
+          ? list[Math.floor(Math.random() * list.length)]
+          : list[0]);
       if (firstTrack) {
         soundEngine.unlock();
         soundEngine.playTrack(firstTrack);
@@ -449,7 +537,11 @@ export default function App() {
   const handleEnterFromIntro = () => {
     soundEngine.unlock();
     soundEngine.playSparkle();
-    const first = tracks.find((t) => t.id === currentTrackId) || tracks[0];
+    const first =
+      tracks.find((t) => t.id === currentTrackId) ||
+      (isShuffle && tracks.length > 1
+        ? tracks[Math.floor(Math.random() * tracks.length)]
+        : tracks[0]);
     if (first && !isPlayingMusic) {
       soundEngine.playTrack(first);
       setCurrentTrackId(first.id);
@@ -468,6 +560,7 @@ export default function App() {
 
   const handleOpenDetail = async (charId: string) => {
     soundEngine.playPageTurn();
+    setActionError(null);
     setSelectedCharId(charId);
     setView('detail');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -476,7 +569,12 @@ export default function App() {
     try {
       await updateDoc(charRef, { viewsCount: increment(1) });
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `characters/${charId}`);
+      reportActionFailure(
+        err,
+        OperationType.UPDATE,
+        `characters/${charId}`,
+        'Không thể cập nhật lượt xem lên Firebase. Vui lòng kiểm tra kết nối hoặc quy tắc bảo mật.'
+      );
     }
   };
 
@@ -501,14 +599,18 @@ export default function App() {
   };
 
   const handleNextTrack = () => {
-    if (tracks.length === 0) return;
+    const next = pickNextTrack(tracks, currentTrackId, isShuffle);
+    if (!next) return;
     soundEngine.playChime();
-    const idx = tracks.findIndex((t) => t.id === currentTrackId);
-    const next = tracks[(idx + 1) % tracks.length];
     setCurrentTrackId(next.id);
     soundEngine.playTrack(next);
     setIsPlayingMusic(true);
     setHasAutoStarted(true);
+  };
+
+  const handleToggleShuffle = () => {
+    soundEngine.playChime();
+    setIsShuffle((prev) => !prev);
   };
 
   const handleChangeVolume = (val: number) => {
@@ -528,6 +630,7 @@ export default function App() {
       setAuthModalOpen(true);
       return;
     }
+    setActionError(null);
     const targetChar = characters.find((c) => c.id === charId);
     const alreadyLiked = likedIds.has(charId);
     const charRef = doc(db, 'characters', charId);
@@ -569,15 +672,21 @@ export default function App() {
         );
       }
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `characters/${charId}/likes/${currentUser.uid}`);
+      reportActionFailure(
+        err,
+        OperationType.WRITE,
+        `characters/${charId}/likes/${currentUser.uid}`,
+        'Không thể lưu lượt thả tim lên Firebase. Hãy đảm bảo Gmail của bạn đã xác minh.'
+      );
     }
   };
 
-  const handleAddComment = async (charId: string, content: string) => {
+  const handleAddComment = async (charId: string, content: string): Promise<boolean> => {
     if (!currentUser || !currentUser.emailVerified) {
       setAuthModalOpen(true);
-      return;
+      return false;
     }
+    setActionError(null);
     const targetChar = characters.find((c) => c.id === charId);
     const commentId = `cmt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const path = `characters/${charId}/comments/${commentId}`;
@@ -594,8 +703,15 @@ export default function App() {
       if (targetChar) {
         void notifyAdmin('comment', targetChar, content);
       }
+      return true;
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, path);
+      reportActionFailure(
+        err,
+        OperationType.CREATE,
+        path,
+        'Không thể gửi bình luận lên Firebase. Hãy đảm bảo Gmail của bạn đã xác minh.'
+      );
+      return false;
     }
   };
 
@@ -604,6 +720,7 @@ export default function App() {
     commentId: string,
     content: string
   ) => {
+    setActionError(null);
     const path = `characters/${charId}/comments/${commentId}`;
     try {
       await updateDoc(doc(db, path), {
@@ -612,17 +729,28 @@ export default function App() {
       });
       soundEngine.playSuccess();
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, path);
+      reportActionFailure(
+        err,
+        OperationType.UPDATE,
+        path,
+        'Không thể chỉnh sửa bình luận lúc này.'
+      );
     }
   };
 
   const handleDeleteComment = async (charId: string, commentId: string) => {
+    setActionError(null);
     const path = `characters/${charId}/comments/${commentId}`;
     try {
       await deleteDoc(doc(db, path));
       soundEngine.playChime();
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, path);
+      reportActionFailure(
+        err,
+        OperationType.DELETE,
+        path,
+        'Không thể xoá bình luận lúc này.'
+      );
     }
   };
 
@@ -854,6 +982,19 @@ export default function App() {
           <div className="flex shrink-0 items-center gap-2">
             {currentUser ? (
               <div className="flex items-center gap-2">
+                {!currentUser.emailVerified && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundEngine.playChime();
+                      setAuthModalOpen(true);
+                    }}
+                    className="inline-flex min-h-[36px] cursor-pointer items-center gap-1 rounded-full bg-[#6F1F3B] px-3 py-1 text-[11px] font-bold text-[#FFF0F5] shadow-sm transition-colors whitespace-nowrap hover:bg-[#3A071F]"
+                  >
+                    <MailWarning className="h-3.5 w-3.5" />
+                    <span>Xác minh Gmail</span>
+                  </button>
+                )}
                 <span className="hidden max-w-[140px] truncate text-xs font-semibold text-[#6F1F3B] sm:inline-flex sm:items-center sm:gap-1">
                   {currentUser.role === 'admin' ? (
                     <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-[#6F1F3B]" />
@@ -931,6 +1072,24 @@ export default function App() {
       </header>
 
       <main className="relative z-20 pt-6">
+        {actionError && (
+          <div className="mx-auto mb-4 w-full max-w-4xl px-4 sm:px-6">
+            <div className="flex items-center justify-between gap-3 rounded-2xl border border-[#6F1F3B]/35 bg-white/95 px-4 py-3 text-xs font-semibold text-[#6F1F3B] shadow-sm">
+              <div className="flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0 text-[#6F1F3B]" />
+                <span>{actionError}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setActionError(null)}
+                aria-label="Đóng thông báo lỗi"
+                className="flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full hover:bg-[#E2A6BA]/30"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          </div>
+        )}
         {view === 'gallery' && (
           <motion.div
             initial={{ opacity: 0, y: 14 }}
@@ -1108,10 +1267,13 @@ export default function App() {
             tracks={tracks}
             currentTrackId={currentTrackId}
             isPlaying={isPlayingMusic}
+            isShuffle={isShuffle}
             volume={musicVolume}
             sfxEnabled={sfxEnabled}
             onSelectTrack={handleSelectTrack}
             onTogglePlay={handleTogglePlay}
+            onNextTrack={handleNextTrack}
+            onToggleShuffle={handleToggleShuffle}
             onChangeVolume={handleChangeVolume}
             onToggleSfx={handleToggleSfx}
             onPlayHoverSound={() => soundEngine.playHoverTick()}
@@ -1138,14 +1300,23 @@ export default function App() {
       <MusicDock
         currentTrack={currentTrack}
         isPlaying={isPlayingMusic}
+        isShuffle={isShuffle}
         sfxEnabled={sfxEnabled}
         onTogglePlay={handleTogglePlay}
         onNextTrack={handleNextTrack}
+        onToggleShuffle={handleToggleShuffle}
         onToggleSfx={handleToggleSfx}
         onOpenMusicPage={() => handleNavigate('music')}
       />
 
-      <AuthModal isOpen={authModalOpen} onClose={() => setAuthModalOpen(false)} />
+      <AuthModal
+        isOpen={authModalOpen}
+        currentUser={currentUser}
+        onRefreshAuth={() => {
+          void syncFirebaseUser(auth.currentUser);
+        }}
+        onClose={() => setAuthModalOpen(false)}
+      />
     </div>
   );
 }

@@ -3,7 +3,7 @@ import { motion } from 'motion/react';
 import {
   ArrowLeft,
   Heart,
-  ExternalLink,
+  Copy,
   MessageCircle,
   Send,
   Trash2,
@@ -25,7 +25,7 @@ interface CharacterDetailPageProps {
   currentUser: UserProfile | null;
   onBack: () => void;
   onToggleLike: (characterId: string) => void;
-  onAddComment: (characterId: string, content: string) => Promise<void>;
+  onAddComment: (characterId: string, content: string) => Promise<boolean>;
   onUpdateComment: (characterId: string, commentId: string, content: string) => Promise<void>;
   onDeleteComment: (characterId: string, commentId: string) => Promise<void>;
   onRequestAuth: () => void;
@@ -52,6 +52,7 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [pendingDeleteCommentId, setPendingDeleteCommentId] = useState<string | null>(null);
   const [deletingComment, setDeletingComment] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const handleLikeClick = () => {
     if (!currentUser || !currentUser.emailVerified) {
@@ -74,9 +75,11 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
     if (!trimmed || submitting) return;
     setSubmitting(true);
     try {
-      await onAddComment(character.id, trimmed);
-      setCommentText('');
-      setAuthNotice(null);
+      const ok = await onAddComment(character.id, trimmed);
+      if (ok) {
+        setCommentText('');
+        setAuthNotice(null);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -107,6 +110,27 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
       : character.link
         ? `https://${character.link}`
         : '';
+
+  const handleCopyLink = async () => {
+    if (!safeHref) return;
+    try {
+      await navigator.clipboard.writeText(safeHref);
+    } catch {
+      const textarea = document.createElement('textarea');
+      textarea.value = safeHref;
+      textarea.style.position = 'fixed';
+      textarea.style.opacity = '0';
+      document.body.appendChild(textarea);
+      textarea.select();
+      try {
+        document.execCommand('copy');
+      } finally {
+        document.body.removeChild(textarea);
+      }
+    }
+    setCopiedLink(true);
+    window.setTimeout(() => setCopiedLink(false), 2000);
+  };
 
   return (
     <motion.div
@@ -199,20 +223,39 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
             </div>
 
             {safeHref && (
-              <div className="pt-2">
-                <a
-                  href={safeHref}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onPointerEnter={onPlayHoverSound}
-                  className="inline-flex min-h-[46px] items-center gap-2 rounded-full bg-gradient-to-r from-[#6F1F3B] to-[#3A071F] px-6 py-2.5 text-sm font-semibold text-[#FFF0F5] shadow-[0_10px_24px_-8px_rgba(111,31,59,0.55)] transition-all duration-200 hover:-translate-y-0.5 hover:shadow-[0_14px_30px_-6px_rgba(111,31,59,0.7)] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#3A071F]"
-                >
+              <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2 md:justify-start">
+                <div className="inline-flex min-h-[46px] items-center gap-2 rounded-full bg-gradient-to-r from-[#6F1F3B] to-[#3A071F] px-5 py-2 text-sm font-semibold text-[#FFF0F5] shadow-[0_10px_24px_-8px_rgba(111,31,59,0.55)]">
                   <span>Mua Kẹo</span>
-                  <span className="rounded-md bg-[#E2A6BA]/25 px-2 py-0.5 font-extrabold text-[#FFF0F5] underline decoration-[#E2A6BA] decoration-2 underline-offset-4">
+                  <a
+                    href={safeHref}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    onPointerEnter={onPlayHoverSound}
+                    className="rounded-md bg-[#E2A6BA]/30 px-2.5 py-0.5 font-extrabold text-[#FFF0F5] underline decoration-[#FFF0F5] decoration-2 underline-offset-4 transition-colors hover:bg-[#FFF0F5] hover:text-[#3A071F] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFF0F5]"
+                  >
                     Ở Đây
-                  </span>
-                  <ExternalLink className="h-4 w-4 text-[#E2A6BA]" />
-                </a>
+                  </a>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleCopyLink}
+                  onPointerEnter={onPlayHoverSound}
+                  aria-label="Copy link mua kẹo"
+                  className="inline-flex min-h-[46px] cursor-pointer items-center gap-1.5 rounded-full border border-[#B65A7C]/35 bg-white/85 px-4 py-2 text-xs font-bold text-[#6F1F3B] shadow-sm transition-colors hover:bg-[#E2A6BA]/30 hover:text-[#3A071F]"
+                >
+                  {copiedLink ? (
+                    <>
+                      <Check className="h-4 w-4 text-[#6F1F3B]" />
+                      <span>Đã copy link</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="h-4 w-4 text-[#B65A7C]" />
+                      <span>Copy link</span>
+                    </>
+                  )}
+                </button>
               </div>
             )}
           </div>
@@ -226,7 +269,7 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
             <MessageCircle className="h-5 w-5 text-[#B65A7C]" />
             <span>Bình luận ({comments.length})</span>
           </h2>
-          {!currentUser && (
+          {!currentUser ? (
             <button
               type="button"
               onClick={onRequestAuth}
@@ -234,8 +277,31 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
             >
               Đăng nhập để bình luận &amp; thả tim
             </button>
-          )}
+          ) : !currentUser.emailVerified ? (
+            <button
+              type="button"
+              onClick={onRequestAuth}
+              className="cursor-pointer rounded-full bg-[#6F1F3B] px-3.5 py-1.5 text-xs font-bold text-[#FFF0F5] hover:bg-[#3A071F]"
+            >
+              Xác minh Gmail ngay
+            </button>
+          ) : null}
         </div>
+
+        {currentUser && !currentUser.emailVerified && (
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#6F1F3B]/30 bg-[#E2A6BA]/35 px-4 py-2.5 text-xs font-semibold text-[#3A071F]">
+            <span>
+              Tài khoản {currentUser.email} chưa xác minh Gmail nên chưa thể thả tim hoặc bình luận.
+            </span>
+            <button
+              type="button"
+              onClick={onRequestAuth}
+              className="cursor-pointer font-bold text-[#6F1F3B] underline underline-offset-4 hover:text-[#3A071F]"
+            >
+              Mở hướng dẫn xác minh
+            </button>
+          </div>
+        )}
 
         {authNotice && (
           <div className="mb-4 rounded-xl border border-[#B65A7C]/30 bg-[#E2A6BA]/25 px-4 py-2.5 text-xs font-medium text-[#3A071F]">

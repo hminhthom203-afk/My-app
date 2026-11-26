@@ -94,6 +94,11 @@ class SoundEngine {
   private stepIndex = 0;
   private loopTimer: number | null = null;
   private lastHoverAt = 0;
+  private onTrackEndedCb: (() => void) | null = null;
+
+  public setOnTrackEnded(cb: (() => void) | null) {
+    this.onTrackEndedCb = cb;
+  }
 
   private ensureContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
@@ -237,8 +242,16 @@ class SoundEngine {
     if (track.audioUrl && track.audioUrl.trim().length > 0) {
       if (!this.audioEl) {
         this.audioEl = new Audio();
-        this.audioEl.loop = true;
+        this.audioEl.addEventListener('ended', () => {
+          if (this.onTrackEndedCb) {
+            this.onTrackEndedCb();
+          } else if (this.audioEl && this.isPlayingMusic) {
+            this.audioEl.currentTime = 0;
+            void this.audioEl.play().catch(() => {});
+          }
+        });
       }
+      this.audioEl.loop = false;
       this.audioEl.src = track.audioUrl;
       this.audioEl.volume = this.volume;
       this.audioEl.play().catch(() => {

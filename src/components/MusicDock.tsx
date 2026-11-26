@@ -1,13 +1,15 @@
 import React from 'react';
-import { Play, Pause, SkipForward, Volume2, VolumeX } from 'lucide-react';
+import { Play, Pause, SkipForward, Volume2, VolumeX, Shuffle } from 'lucide-react';
 import { MusicTrack } from '../types';
 
 interface MusicDockProps {
   currentTrack: MusicTrack | undefined;
   isPlaying: boolean;
+  isShuffle: boolean;
   sfxEnabled: boolean;
   onTogglePlay: () => void;
   onNextTrack: () => void;
+  onToggleShuffle: () => void;
   onToggleSfx: () => void;
   onOpenMusicPage: () => void;
 }
@@ -15,16 +17,18 @@ interface MusicDockProps {
 export const MusicDock: React.FC<MusicDockProps> = ({
   currentTrack,
   isPlaying,
+  isShuffle,
   sfxEnabled,
   onTogglePlay,
   onNextTrack,
+  onToggleShuffle,
   onToggleSfx,
   onOpenMusicPage,
 }) => {
   if (!currentTrack) return null;
 
   return (
-    <div className="fixed right-3 bottom-3 left-3 z-40 mx-auto flex h-12 max-w-md items-center justify-between gap-2 rounded-full border border-[#B65A7C]/35 bg-[#3A071F]/92 px-3 text-[#FFF0F5] shadow-[0_10px_30px_-8px_rgba(58,7,31,0.55)] backdrop-blur-md sm:left-auto sm:right-5 sm:bottom-5 sm:w-auto sm:min-w-[320px]">
+    <div className="fixed right-3 bottom-3 left-3 z-40 mx-auto flex h-12 max-w-md items-center justify-between gap-2 rounded-full border border-[#B65A7C]/35 bg-[#3A071F]/92 px-3 text-[#FFF0F5] shadow-[0_10px_30px_-8px_rgba(58,7,31,0.55)] backdrop-blur-md sm:left-auto sm:right-5 sm:bottom-5 sm:w-auto sm:min-w-[340px]">
       <button
         type="button"
         onClick={onTogglePlay}
@@ -45,6 +49,21 @@ export const MusicDock: React.FC<MusicDockProps> = ({
       </button>
 
       <div className="flex shrink-0 items-center gap-1">
+        <button
+          type="button"
+          onClick={onToggleShuffle}
+          aria-pressed={isShuffle}
+          aria-label={isShuffle ? 'Tắt phát ngẫu nhiên' : 'Bật phát ngẫu nhiên'}
+          title={isShuffle ? 'Phát ngẫu nhiên: Bật' : 'Phát ngẫu nhiên: Tắt'}
+          className={`flex h-8 w-8 cursor-pointer items-center justify-center rounded-full transition-colors ${
+            isShuffle
+              ? 'bg-[#E2A6BA] text-[#3A071F]'
+              : 'text-[#E2A6BA] hover:bg-white/10 hover:text-[#FFF0F5]'
+          }`}
+        >
+          <Shuffle className="h-3.5 w-3.5" />
+        </button>
+
         <button
           type="button"
           onClick={onNextTrack}

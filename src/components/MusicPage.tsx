@@ -1,16 +1,19 @@
 import React from 'react';
 import { motion } from 'motion/react';
-import { Play, Pause, Volume2, VolumeX, Music2, Disc3 } from 'lucide-react';
+import { Play, Pause, Volume2, VolumeX, Music2, Disc3, Shuffle, SkipForward } from 'lucide-react';
 import { MusicTrack } from '../types';
 
 interface MusicPageProps {
   tracks: MusicTrack[];
   currentTrackId: string;
   isPlaying: boolean;
+  isShuffle: boolean;
   volume: number;
   sfxEnabled: boolean;
   onSelectTrack: (track: MusicTrack) => void;
   onTogglePlay: () => void;
+  onNextTrack: () => void;
+  onToggleShuffle: () => void;
   onChangeVolume: (v: number) => void;
   onToggleSfx: () => void;
   onPlayHoverSound: () => void;
@@ -20,10 +23,13 @@ export const MusicPage: React.FC<MusicPageProps> = ({
   tracks,
   currentTrackId,
   isPlaying,
+  isShuffle,
   volume,
   sfxEnabled,
   onSelectTrack,
   onTogglePlay,
+  onNextTrack,
+  onToggleShuffle,
   onChangeVolume,
   onToggleSfx,
   onPlayHoverSound,
@@ -74,7 +80,7 @@ export const MusicPage: React.FC<MusicPageProps> = ({
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-3">
+          <div className="flex flex-wrap items-center justify-center gap-2.5">
             <button
               type="button"
               onClick={onTogglePlay}
@@ -82,6 +88,32 @@ export const MusicPage: React.FC<MusicPageProps> = ({
             >
               {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
               <span className="whitespace-nowrap">{isPlaying ? 'Tạm dừng' : 'Phát nhạc'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onNextTrack}
+              disabled={tracks.length === 0}
+              className="inline-flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-full border border-[#E2A6BA]/40 bg-[#FFF0F5]/10 px-4 py-2 text-xs font-semibold text-[#FFF0F5] transition-colors hover:bg-[#FFF0F5]/20 disabled:opacity-50"
+            >
+              <SkipForward className="h-4 w-4" />
+              <span className="whitespace-nowrap">Bài tiếp</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={onToggleShuffle}
+              aria-pressed={isShuffle}
+              className={`inline-flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-full border px-4 py-2 text-xs font-semibold transition-colors ${
+                isShuffle
+                  ? 'border-[#FFF0F5] bg-[#E2A6BA] text-[#3A071F]'
+                  : 'border-[#E2A6BA]/40 bg-[#FFF0F5]/10 text-[#FFF0F5] hover:bg-[#FFF0F5]/20'
+              }`}
+            >
+              <Shuffle className="h-4 w-4" />
+              <span className="whitespace-nowrap">
+                {isShuffle ? 'Ngẫu nhiên: Bật' : 'Ngẫu nhiên: Tắt'}
+              </span>
             </button>
 
             <button
