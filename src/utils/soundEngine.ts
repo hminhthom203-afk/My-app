@@ -1,4 +1,7 @@
+import { collection, getDocs } from 'firebase/firestore';
+import { db } from '../firebase';
 import { MusicTrack } from '../types';
+import { base64ToUint8Array, normalizeMediaUrl } from './mediaHelpers';
 
 type SynthPreset = NonNullable<MusicTrack['synthPreset']>;
 
@@ -95,6 +98,8 @@ class SoundEngine {
   private loopTimer: number | null = null;
   private lastHoverAt = 0;
   private onTrackEndedCb: (() => void) | null = null;
+  private playRequestId = 0;
+  private chunkObjectUrls = new Map<string, string>();
 
   public setOnTrackEnded(cb: (() => void) | null) {
     this.onTrackEndedCb = cb;
@@ -232,31 +237,84 @@ class SoundEngine {
     }
   }
 
+  private ensureAudioEl(): HTMLAudioElement {
+    if (!this.audioEl) {
+      this.audioEl = new Audio();
+      this.audioEl.addEventListener('ended', () => {
+        if (this.onTrackEndedCb) {
+          this.onTrackEndedCb();
+        } else if (this.audioEl && this.isPlayingMusic) {
+          this.audioEl.currentTime = 0;
+          void this.audioEl.play().catch(() => {});
+        }
+      });
+    }
+    return this.audioEl;
+  }
+
+  private async resolveChunkedTrackUrl(track: MusicTrack): Promise<string> {
+    const cacheKey = `${track.id}|${track.audioUrl}`;
+    const existing = this.chunkObjectUrls.get(cacheKey);
+    if (existing) return existing;
+
+    const parts = track.audioUrl.split(':');
+    const mimeType = parts.slice(2).join(':') || 'audio/mpeg';
+    const snap = await getDocs(collection(db, 'tracks', track.id, 'chunks'));
+    const sorted = snap.docs
+      .map((d) => d.data() as { index?: number; data?: string; mimeType?: string })
+      .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+
+    if (sorted.length === 0) {
+      throw new Error('Không tìm thấy dữ liệu âm thanh của bài hát.');
+    }
+
+    const byteArrays: Uint8Array<ArrayBuffer>[] = sorted
+      .filter((c) => typeof c.data === 'string' && c.data.length > 0)
+      .map((c) => new Uint8Array(base64ToUint8Array(c.data!)));
+
+    const resolvedMime = sorted[0]?.mimeType || mimeType;
+    const blob = new Blob(byteArrays, { type: resolvedMime });
+    const objectUrl = URL.createObjectURL(blob);
+    this.chunkObjectUrls.set(cacheKey, objectUrl);
+    return objectUrl;
+  }
+
   public playTrack(track: MusicTrack) {
     this.ensureContext();
     this.stopLoopOnly();
     this.currentTrack = track;
     this.isPlayingMusic = true;
     this.stepIndex = 0;
+    const reqId = ++this.playRequestId;
 
-    if (track.audioUrl && track.audioUrl.trim().length > 0) {
-      if (!this.audioEl) {
-        this.audioEl = new Audio();
-        this.audioEl.addEventListener('ended', () => {
-          if (this.onTrackEndedCb) {
-            this.onTrackEndedCb();
-          } else if (this.audioEl && this.isPlayingMusic) {
-            this.audioEl.currentTime = 0;
-            void this.audioEl.play().catch(() => {});
-          }
-        });
+    const rawUrl = (track.audioUrl || '').trim();
+    if (rawUrl.length > 0) {
+      if (rawUrl.startsWith('chunks:')) {
+        void this.resolveChunkedTrackUrl(track)
+          .then((objectUrl) => {
+            if (reqId !== this.playRequestId || !this.isPlayingMusic) return;
+            const audio = this.ensureAudioEl();
+            audio.loop = false;
+            audio.src = objectUrl;
+            audio.volume = this.volume;
+            return audio.play();
+          })
+          .catch(() => {
+            if (reqId === this.playRequestId && this.isPlayingMusic) {
+              this.startSynthLoop(track.synthPreset || 'rose_waltz');
+            }
+          });
+        return;
       }
-      this.audioEl.loop = false;
-      this.audioEl.src = track.audioUrl;
-      this.audioEl.volume = this.volume;
-      this.audioEl.play().catch(() => {
-        // Fallback silently to synth if external URL cannot play
-        this.startSynthLoop(track.synthPreset || 'rose_waltz');
+
+      const audio = this.ensureAudioEl();
+      audio.loop = false;
+      audio.src = normalizeMediaUrl(rawUrl, 'audio');
+      audio.volume = this.volume;
+      audio.play().catch(() => {
+        if (reqId === this.playRequestId && this.isPlayingMusic) {
+          this.startSynthLoop(track.synthPreset || 'rose_waltz');
+        }
       });
       return;
     }

@@ -6,6 +6,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocs,
   increment,
   onSnapshot,
   orderBy,
@@ -38,6 +39,7 @@ import {
 import { ADMIN_EMAIL, SEED_CHARACTERS } from './data/initialData';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { soundEngine } from './utils/soundEngine';
+import { normalizeMediaUrl } from './utils/mediaHelpers';
 import { PetalCanvas } from './components/PetalCanvas';
 import { IntroPage } from './components/IntroPage';
 import { AvatarFrame } from './components/AvatarFrame';
@@ -62,7 +64,8 @@ function slugId(raw: string): string {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
   return `${base || 'item'}-${Date.now().toString(36)}`;
 }
 
@@ -778,12 +781,14 @@ export default function App() {
     link: string;
     linkLabel: string;
   }) => {
+    setActionError(null);
+    const normalizedAvatar = normalizeMediaUrl(input.avatar, 'image').slice(0, 200000);
     if (input.id) {
       const path = `characters/${input.id}`;
       try {
         await updateDoc(doc(db, path), {
           name: input.name,
-          avatar: input.avatar,
+          avatar: normalizedAvatar,
           hashtags: input.hashtags,
           slogan: input.slogan,
           story: input.story,
@@ -793,7 +798,13 @@ export default function App() {
         });
         soundEngine.playSuccess();
       } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, path);
+        reportActionFailure(
+          err,
+          OperationType.UPDATE,
+          path,
+          'Không thể cập nhật nhân vật. Kiểm tra lại kích thước ảnh hoặc đường dẫn hợp lệ.'
+        );
+        throw err;
       }
     } else {
       const newId = slugId(input.name);
@@ -801,7 +812,7 @@ export default function App() {
       try {
         await setDoc(doc(db, path), {
           name: input.name,
-          avatar: input.avatar,
+          avatar: normalizedAvatar,
           hashtags: input.hashtags,
           slogan: input.slogan,
           story: input.story,
@@ -814,7 +825,13 @@ export default function App() {
         });
         soundEngine.playSuccess();
       } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, path);
+        reportActionFailure(
+          err,
+          OperationType.CREATE,
+          path,
+          'Không thể thêm nhân vật mới. Kiểm tra lại ảnh đại diện và thông tin đã nhập.'
+        );
+        throw err;
       }
     }
   };
@@ -829,7 +846,22 @@ export default function App() {
         if (view === 'detail') setView('gallery');
       }
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, path);
+      reportActionFailure(
+        err,
+        OperationType.DELETE,
+        path,
+        'Không thể xoá nhân vật trên Firebase.'
+      );
+    }
+  };
+
+  const deleteTrackChunks = async (trackId: string) => {
+    const chunksSnap = await getDocs(collection(db, 'tracks', trackId, 'chunks'));
+    if (chunksSnap.empty) return;
+    for (let i = 0; i < chunksSnap.docs.length; i += 200) {
+      const batch = writeBatch(db);
+      chunksSnap.docs.slice(i, i + 200).forEach((d) => batch.delete(d.ref));
+      await batch.commit();
     }
   };
 
@@ -841,47 +873,87 @@ export default function App() {
     durationLabel: string;
     audioUrl: string;
     synthPreset: MusicTrack['synthPreset'];
+    pendingAudioFile?: { base64Chunks: string[]; mimeType: string };
+    onProgress?: (percent: number) => void;
   }) => {
-    if (input.id) {
-      const path = `tracks/${input.id}`;
-      try {
+    setActionError(null);
+    const targetId = input.id || slugId(input.title);
+    const path = `tracks/${targetId}`;
+    const resolvedAudioUrl = input.pendingAudioFile
+      ? `chunks:${input.pendingAudioFile.base64Chunks.length}:${input.pendingAudioFile.mimeType}`.slice(
+          0,
+          500
+        )
+      : input.audioUrl.startsWith('chunks:')
+        ? input.audioUrl.slice(0, 500)
+        : normalizeMediaUrl(input.audioUrl, 'audio').slice(0, 500);
+
+    try {
+      if (input.id) {
         await updateDoc(doc(db, path), {
           title: input.title,
           artist: input.artist,
           mood: input.mood,
           durationLabel: input.durationLabel,
-          audioUrl: input.audioUrl,
+          audioUrl: resolvedAudioUrl,
           synthPreset: input.synthPreset,
           updatedAt: serverTimestamp(),
         });
-        soundEngine.playSuccess();
-      } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, path);
-      }
-    } else {
-      const newId = slugId(input.title);
-      const path = `tracks/${newId}`;
-      try {
+      } else {
         await setDoc(doc(db, path), {
           title: input.title,
           artist: input.artist,
           mood: input.mood,
           durationLabel: input.durationLabel,
-          audioUrl: input.audioUrl,
+          audioUrl: resolvedAudioUrl,
           synthPreset: input.synthPreset,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         });
-        soundEngine.playSuccess();
-      } catch (err) {
-        handleFirestoreError(err, OperationType.CREATE, path);
       }
+
+      if (input.pendingAudioFile) {
+        if (input.id) {
+          await deleteTrackChunks(targetId);
+        }
+        const { base64Chunks, mimeType } = input.pendingAudioFile;
+        for (let i = 0; i < base64Chunks.length; i += 4) {
+          const batch = writeBatch(db);
+          const slice = base64Chunks.slice(i, i + 4);
+          slice.forEach((data, offset) => {
+            const idx = i + offset;
+            batch.set(doc(db, 'tracks', targetId, 'chunks', String(idx)), {
+              index: idx,
+              data,
+              mimeType: mimeType.slice(0, 80),
+              createdAt: serverTimestamp(),
+            });
+          });
+          await batch.commit();
+          input.onProgress?.(
+            Math.min(100, Math.round(((i + slice.length) / base64Chunks.length) * 100))
+          );
+        }
+      } else if (input.id && !resolvedAudioUrl.startsWith('chunks:')) {
+        await deleteTrackChunks(targetId);
+      }
+
+      soundEngine.playSuccess();
+    } catch (err) {
+      reportActionFailure(
+        err,
+        input.id ? OperationType.UPDATE : OperationType.CREATE,
+        path,
+        'Không thể lưu bài nhạc lên Firebase. Kiểm tra lại tệp nhạc hoặc đường dẫn.'
+      );
+      throw err;
     }
   };
 
   const handleDeleteTrack = async (id: string) => {
     const path = `tracks/${id}`;
     try {
+      await deleteTrackChunks(id);
       await deleteDoc(doc(db, path));
       if (currentTrackId === id) {
         soundEngine.pauseMusic();
@@ -890,13 +962,21 @@ export default function App() {
       }
       soundEngine.playChime();
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, path);
+      reportActionFailure(
+        err,
+        OperationType.DELETE,
+        path,
+        'Không thể xoá bài nhạc trên Firebase.'
+      );
     }
   };
 
   const handleDeleteAllTracks = async () => {
     if (tracks.length === 0) return;
     try {
+      for (const t of tracks) {
+        await deleteTrackChunks(t.id);
+      }
       const batch = writeBatch(db);
       tracks.forEach((t) => batch.delete(doc(db, 'tracks', t.id)));
       await batch.commit();
@@ -905,22 +985,22 @@ export default function App() {
       setCurrentTrackId('');
       soundEngine.playChime();
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, 'tracks');
-    }
-  };
-
-  const handleMarkNotificationRead = async (id: string) => {
-    const path = `notifications/${id}`;
-    try {
-      await updateDoc(doc(db, path), { read: true });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, path);
+      reportActionFailure(
+        err,
+        OperationType.DELETE,
+        'tracks',
+        'Không thể xoá toàn bộ nhạc trên Firebase.'
+      );
     }
   };
 
   const handleMarkAllNotificationsRead = async () => {
     const unread = notifications.filter((n) => !n.read);
     if (unread.length === 0) return;
+    const unreadIds = new Set(unread.map((n) => n.id));
+    setNotifications((prev) =>
+      prev.map((n) => (unreadIds.has(n.id) ? { ...n, read: true } : n))
+    );
     try {
       for (let i = 0; i < unread.length; i += 450) {
         const chunk = unread.slice(i, i + 450);
@@ -931,7 +1011,12 @@ export default function App() {
         await batch.commit();
       }
     } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, 'notifications');
+      reportActionFailure(
+        err,
+        OperationType.UPDATE,
+        'notifications',
+        'Không thể cập nhật trạng thái đã xem thông báo trên Firebase.'
+      );
     }
   };
 
@@ -940,7 +1025,32 @@ export default function App() {
     try {
       await deleteDoc(doc(db, path));
     } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, path);
+      reportActionFailure(
+        err,
+        OperationType.DELETE,
+        path,
+        'Không thể xoá thông báo trên Firebase.'
+      );
+    }
+  };
+
+  const handleDeleteAllNotifications = async () => {
+    if (notifications.length === 0) return;
+    try {
+      for (let i = 0; i < notifications.length; i += 450) {
+        const chunk = notifications.slice(i, i + 450);
+        const batch = writeBatch(db);
+        chunk.forEach((n) => batch.delete(doc(db, 'notifications', n.id)));
+        await batch.commit();
+      }
+      soundEngine.playChime();
+    } catch (err) {
+      reportActionFailure(
+        err,
+        OperationType.DELETE,
+        'notifications',
+        'Không thể xoá toàn bộ thông báo trên Firebase.'
+      );
     }
   };
 
@@ -1330,9 +1440,9 @@ export default function App() {
             onSaveTrack={handleSaveTrack}
             onDeleteTrack={handleDeleteTrack}
             onDeleteAllTracks={handleDeleteAllTracks}
-            onMarkNotificationRead={handleMarkNotificationRead}
             onMarkAllNotificationsRead={handleMarkAllNotificationsRead}
             onDeleteNotification={handleDeleteNotification}
+            onDeleteAllNotifications={handleDeleteAllNotifications}
             onSeedDefaults={handleSeedDefaults}
           />
         )}

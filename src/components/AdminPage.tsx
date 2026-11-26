@@ -5,24 +5,34 @@ import {
   Pencil,
   Trash2,
   Music,
-  Users,
   Upload,
   Sparkles,
   Bell,
-  Check,
   Heart,
   MessageCircle,
+  X,
+  Link2,
+  UserPlus,
+  ArrowLeft,
 } from 'lucide-react';
 import { AdminNotification, Character, MusicTrack } from '../types';
-import { PRESET_AVATARS } from '../data/initialData';
+import {
+  compressImageFile,
+  normalizeMediaUrl,
+  readAndChunkAudioFile,
+  stripFileExtension,
+} from '../utils/mediaHelpers';
 import { AvatarFrame } from './AvatarFrame';
 import { ConfirmModal } from './ConfirmModal';
+
+type AdminTab = 'add_char' | 'edit_char' | 'music' | 'notifications';
 
 type PendingDelete =
   | { kind: 'character'; id: string; label: string }
   | { kind: 'track'; id: string; label: string }
   | { kind: 'all_tracks'; count: number }
   | { kind: 'notification'; id: string }
+  | { kind: 'all_notifications'; count: number }
   | null;
 
 interface CharacterFormInput {
@@ -44,6 +54,8 @@ interface TrackFormInput {
   durationLabel: string;
   audioUrl: string;
   synthPreset: MusicTrack['synthPreset'];
+  pendingAudioFile?: { base64Chunks: string[]; mimeType: string };
+  onProgress?: (percent: number) => void;
 }
 
 interface AdminPageProps {
@@ -55,46 +67,10 @@ interface AdminPageProps {
   onSaveTrack: (input: TrackFormInput) => Promise<void>;
   onDeleteTrack: (id: string) => Promise<void>;
   onDeleteAllTracks: () => Promise<void>;
-  onMarkNotificationRead: (id: string) => Promise<void>;
   onMarkAllNotificationsRead: () => Promise<void>;
   onDeleteNotification: (id: string) => Promise<void>;
+  onDeleteAllNotifications: () => Promise<void>;
   onSeedDefaults: () => Promise<void>;
-}
-
-function compressImageFile(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Không đọc được ảnh'));
-    reader.onload = () => {
-      const img = new Image();
-      img.onerror = () => reject(new Error('Ảnh không hợp lệ'));
-      img.onload = () => {
-        const maxDim = 420;
-        let { width, height } = img;
-        if (width > maxDim || height > maxDim) {
-          if (width > height) {
-            height = Math.round((height * maxDim) / width);
-            width = maxDim;
-          } else {
-            width = Math.round((width * maxDim) / height);
-            height = maxDim;
-          }
-        }
-        const canvas = document.createElement('canvas');
-        canvas.width = width;
-        canvas.height = height;
-        const ctx = canvas.getContext('2d');
-        if (!ctx) {
-          reject(new Error('Canvas error'));
-          return;
-        }
-        ctx.drawImage(img, 0, 0, width, height);
-        resolve(canvas.toDataURL('image/jpeg', 0.82));
-      };
-      img.src = String(reader.result);
-    };
-    reader.readAsDataURL(file);
-  });
 }
 
 export const AdminPage: React.FC<AdminPageProps> = ({
@@ -106,13 +82,14 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   onSaveTrack,
   onDeleteTrack,
   onDeleteAllTracks,
-  onMarkNotificationRead,
   onMarkAllNotificationsRead,
   onDeleteNotification,
+  onDeleteAllNotifications,
   onSeedDefaults,
 }) => {
-  const [tab, setTab] = useState<'chars' | 'music' | 'notifications'>('chars');
+  const [tab, setTab] = useState<AdminTab>('edit_char');
   const [saving, setSaving] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
   const [pendingDelete, setPendingDelete] = useState<PendingDelete>(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -121,29 +98,50 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   // Character form state
   const [editingCharId, setEditingCharId] = useState<string | null>(null);
   const [charName, setCharName] = useState('');
-  const [charAvatar, setCharAvatar] = useState(PRESET_AVATARS[0].url);
-  const [charHashtags, setCharHashtags] = useState('hoahong, keongot');
+  const [charAvatar, setCharAvatar] = useState('');
+  const [charHashtags, setCharHashtags] = useState('');
   const [charSlogan, setCharSlogan] = useState('');
   const [charStory, setCharStory] = useState('');
   const [charLink, setCharLink] = useState('');
+  const [readingAvatar, setReadingAvatar] = useState(false);
+  const [charError, setCharError] = useState<string | null>(null);
 
   // Track form state
   const [editingTrackId, setEditingTrackId] = useState<string | null>(null);
   const [trackTitle, setTrackTitle] = useState('');
   const [trackArtist, setTrackArtist] = useState('Hộp Nhạc Của Kẹo');
-  const [trackMood, setTrackMood] = useState('Dịu dàng · Huyền ảo');
   const [trackUrl, setTrackUrl] = useState('');
-  const [trackPreset, setTrackPreset] =
-    useState<MusicTrack['synthPreset']>('rose_waltz');
+  const [pendingAudioFile, setPendingAudioFile] = useState<{
+    base64Chunks: string[];
+    mimeType: string;
+    fileName: string;
+    sizeBytes: number;
+  } | null>(null);
+  const [existingChunksUrl, setExistingChunksUrl] = useState<string>('');
+  const [readingAudio, setReadingAudio] = useState(false);
+  const [trackError, setTrackError] = useState<string | null>(null);
 
   const resetCharForm = () => {
     setEditingCharId(null);
     setCharName('');
-    setCharAvatar(PRESET_AVATARS[0].url);
-    setCharHashtags('hoahong, keongot');
+    setCharAvatar('');
+    setCharHashtags('');
     setCharSlogan('');
     setCharStory('');
     setCharLink('');
+    setCharError(null);
+  };
+
+  const handleOpenAddChar = () => {
+    resetCharForm();
+    setTab('add_char');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleOpenEditCharTab = () => {
+    resetCharForm();
+    setTab('edit_char');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleEditChar = (c: Character) => {
@@ -154,22 +152,40 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     setCharSlogan(c.slogan);
     setCharStory(c.story);
     setCharLink(c.link);
+    setCharError(null);
+    setTab('edit_char');
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
+    setCharError(null);
+    setReadingAvatar(true);
     try {
       const dataUrl = await compressImageFile(file);
       setCharAvatar(dataUrl);
-    } catch {
-      // ignore invalid file
+    } catch (err) {
+      setCharError(err instanceof Error ? err.message : 'Không thể đọc tệp ảnh này.');
+    } finally {
+      setReadingAvatar(false);
     }
   };
 
   const handleCharSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!charName.trim() || !charSlogan.trim() || saving) return;
+    if (saving || readingAvatar) return;
+    setCharError(null);
+
+    if (!charAvatar.trim()) {
+      setCharError('Vui lòng chọn ảnh nhân vật từ máy hoặc dán link ảnh / Google Drive.');
+      return;
+    }
+    if (!charName.trim() || !charSlogan.trim()) {
+      setCharError('Vui lòng nhập đầy đủ Tên nhân vật và Slogan.');
+      return;
+    }
 
     const parsedTags = charHashtags
       .split(',')
@@ -182,8 +198,8 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       await onSaveCharacter({
         id: editingCharId || undefined,
         name: charName.trim().slice(0, 80),
-        avatar: charAvatar.trim().slice(0, 200000) || PRESET_AVATARS[0].url,
-        hashtags: parsedTags.length > 0 ? parsedTags : ['ankeohong'],
+        avatar: normalizeMediaUrl(charAvatar, 'image').slice(0, 200000),
+        hashtags: parsedTags,
         slogan: charSlogan.trim().slice(0, 200),
         story:
           charStory.trim().slice(0, 5000) ||
@@ -192,6 +208,10 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         linkLabel: 'Mua Kẹo Ở Đây',
       });
       resetCharForm();
+      setTab('edit_char');
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    } catch {
+      setCharError('Không thể lưu nhân vật. Hãy kiểm tra lại ảnh hoặc link hợp lệ.');
     } finally {
       setSaving(false);
     }
@@ -201,37 +221,81 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     setEditingTrackId(null);
     setTrackTitle('');
     setTrackArtist('Hộp Nhạc Của Kẹo');
-    setTrackMood('Dịu dàng · Huyền ảo');
     setTrackUrl('');
-    setTrackPreset('rose_waltz');
+    setPendingAudioFile(null);
+    setExistingChunksUrl('');
+    setTrackError(null);
+    setUploadProgress(null);
   };
 
   const handleEditTrack = (t: MusicTrack) => {
     setEditingTrackId(t.id);
     setTrackTitle(t.title);
     setTrackArtist(t.artist);
-    setTrackMood(t.mood);
-    setTrackUrl(t.audioUrl || '');
-    setTrackPreset(t.synthPreset || 'rose_waltz');
+    if (t.audioUrl && t.audioUrl.startsWith('chunks:')) {
+      setExistingChunksUrl(t.audioUrl);
+      setTrackUrl('');
+    } else {
+      setExistingChunksUrl('');
+      setTrackUrl(t.audioUrl || '');
+    }
+    setPendingAudioFile(null);
+    setTrackError(null);
+    setUploadProgress(null);
+  };
+
+  const handleAudioFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setTrackError(null);
+    setReadingAudio(true);
+    try {
+      const processed = await readAndChunkAudioFile(file);
+      setPendingAudioFile(processed);
+      setExistingChunksUrl('');
+      setTrackUrl('');
+      setTrackTitle((prev) => (prev.trim() ? prev : stripFileExtension(file.name).slice(0, 100)));
+    } catch (err) {
+      setTrackError(err instanceof Error ? err.message : 'Không thể đọc tệp nhạc này.');
+    } finally {
+      setReadingAudio(false);
+    }
   };
 
   const handleTrackSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!trackTitle.trim() || saving) return;
+    if (!trackTitle.trim() || saving || readingAudio) return;
+    setTrackError(null);
     setSaving(true);
+    setUploadProgress(pendingAudioFile ? 0 : null);
     try {
+      const hasAudioSource =
+        Boolean(pendingAudioFile) || Boolean(existingChunksUrl) || Boolean(trackUrl.trim());
       await onSaveTrack({
         id: editingTrackId || undefined,
         title: trackTitle.trim().slice(0, 100),
         artist: trackArtist.trim().slice(0, 100) || 'Hộp Nhạc Của Kẹo',
-        mood: trackMood.trim().slice(0, 100) || 'Êm ái',
-        durationLabel: trackUrl.trim() ? 'Nhạc tải lên' : 'Vòng lặp êm ái',
-        audioUrl: trackUrl.trim().slice(0, 500),
-        synthPreset: trackPreset,
+        mood: 'Nhạc nền',
+        durationLabel: hasAudioSource ? 'Nhạc đã tải' : 'Vòng lặp êm ái',
+        audioUrl: pendingAudioFile
+          ? ''
+          : existingChunksUrl || normalizeMediaUrl(trackUrl, 'audio').slice(0, 500),
+        synthPreset: 'rose_waltz',
+        pendingAudioFile: pendingAudioFile
+          ? {
+              base64Chunks: pendingAudioFile.base64Chunks,
+              mimeType: pendingAudioFile.mimeType,
+            }
+          : undefined,
+        onProgress: (percent) => setUploadProgress(percent),
       });
       resetTrackForm();
+    } catch {
+      setTrackError('Không thể lưu bài nhạc. Hãy kiểm tra lại tệp hoặc link nhạc.');
     } finally {
       setSaving(false);
+      setUploadProgress(null);
     }
   };
 
@@ -250,6 +314,8 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         resetTrackForm();
       } else if (pendingDelete.kind === 'notification') {
         await onDeleteNotification(pendingDelete.id);
+      } else if (pendingDelete.kind === 'all_notifications') {
+        await onDeleteAllNotifications();
       }
       setPendingDelete(null);
     } finally {
@@ -277,11 +343,195 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         description: `Bạn có chắc muốn xoá tất cả ${pendingDelete.count} bài nhạc hiện có trên Firebase?`,
       };
     }
+    if (pendingDelete.kind === 'all_notifications') {
+      return {
+        title: 'Xác nhận xoá toàn bộ thông báo',
+        description: `Bạn có chắc muốn xoá tất cả ${pendingDelete.count} thông báo khỏi hộp thư quản trị?`,
+      };
+    }
     return {
       title: 'Xác nhận xoá thông báo',
       description: 'Bạn có chắc muốn xoá thông báo này khỏi hộp thư quản trị?',
     };
   })();
+
+  const renderCharacterForm = (isEditMode: boolean) => (
+    <div className="mx-auto w-full max-w-2xl">
+      {isEditMode && (
+        <button
+          type="button"
+          onClick={handleOpenEditCharTab}
+          className="mb-4 inline-flex min-h-[40px] cursor-pointer items-center gap-2 rounded-full border border-[#B65A7C]/30 bg-white/90 px-4 py-1.5 text-xs font-semibold text-[#6F1F3B] hover:bg-white"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          <span>Quay lại danh sách Sửa nhân vật</span>
+        </button>
+      )}
+
+      <form
+        onSubmit={handleCharSubmit}
+        className="space-y-4 rounded-3xl border border-[#B65A7C]/25 bg-[#FFF0F5]/92 p-6 shadow-sm sm:p-8"
+      >
+        <h2 className="font-cute text-xl font-bold text-[#3A071F]">
+          {isEditMode ? 'Chỉnh sửa nhân vật' : 'Thêm nhân vật mới'}
+        </h2>
+
+        <div className="flex flex-wrap items-center gap-4">
+          <AvatarFrame
+            src={normalizeMediaUrl(charAvatar, 'image')}
+            alt={charName || 'Chưa chọn ảnh'}
+            size="md"
+            className="shrink-0"
+          />
+          <div className="min-w-0 flex-1 space-y-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="inline-flex min-h-[40px] cursor-pointer items-center gap-2 rounded-full border border-[#B65A7C]/35 bg-white px-4 py-1.5 text-xs font-semibold text-[#6F1F3B] hover:bg-[#E2A6BA]/25">
+                <Upload className="h-3.5 w-3.5" />
+                <span>{readingAvatar ? 'Đang tải ảnh...' : 'Chọn ảnh từ máy'}</span>
+                <input
+                  type="file"
+                  accept="image/*"
+                  disabled={readingAvatar}
+                  onChange={handleAvatarUpload}
+                  className="hidden"
+                />
+              </label>
+              {charAvatar && (
+                <button
+                  type="button"
+                  onClick={() => setCharAvatar('')}
+                  className="inline-flex min-h-[36px] cursor-pointer items-center gap-1 rounded-full border border-[#B65A7C]/25 bg-white px-3 py-1 text-[11px] font-semibold text-[#B65A7C] hover:text-[#3A071F]"
+                >
+                  <X className="h-3 w-3" />
+                  <span>Xoá ảnh</span>
+                </button>
+              )}
+            </div>
+            <p className="text-[11px] text-[#6F1F3B]/75">
+              Tự chọn tệp ảnh từ máy/Drive hoặc dán link bên dưới.
+            </p>
+          </div>
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
+            Hoặc dán link ảnh / Google Drive *
+          </label>
+          <input
+            type="text"
+            value={charAvatar.startsWith('data:') ? '' : charAvatar}
+            onChange={(e) => {
+              setCharError(null);
+              setCharAvatar(e.target.value);
+            }}
+            placeholder={
+              charAvatar.startsWith('data:')
+                ? 'Đang dùng ảnh tải lên từ máy (dán link mới để thay)'
+                : 'https://drive.google.com/file/d/... hoặc link ảnh'
+            }
+            className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
+          />
+          <p className="mt-1 text-[11px] text-[#B65A7C]">
+            Link Google Drive cần bật chia sẻ: Bất kỳ ai có đường liên kết.
+          </p>
+        </div>
+
+        {charError && (
+          <p className="rounded-xl border border-[#6F1F3B]/30 bg-white px-3 py-2 text-xs font-semibold text-[#6F1F3B]">
+            {charError}
+          </p>
+        )}
+
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
+            Tên nhân vật *
+          </label>
+          <input
+            type="text"
+            required
+            maxLength={80}
+            value={charName}
+            onChange={(e) => setCharName(e.target.value)}
+            className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
+            Hashtag (cách nhau bởi dấu phẩy)
+          </label>
+          <input
+            type="text"
+            value={charHashtags}
+            onChange={(e) => setCharHashtags(e.target.value)}
+            placeholder="Nhập hashtag (cách nhau bởi dấu phẩy)..."
+            className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">Slogan *</label>
+          <input
+            type="text"
+            required
+            maxLength={200}
+            value={charSlogan}
+            onChange={(e) => setCharSlogan(e.target.value)}
+            className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
+            Cốt truyện
+          </label>
+          <textarea
+            rows={5}
+            maxLength={5000}
+            value={charStory}
+            onChange={(e) => setCharStory(e.target.value)}
+            className="w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
+            Link mua kẹo (gắn vào chữ Ở Đây)
+          </label>
+          <input
+            type="text"
+            maxLength={500}
+            value={charLink}
+            onChange={(e) => setCharLink(e.target.value)}
+            placeholder="https://..."
+            className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
+          />
+        </div>
+
+        <div className="flex flex-wrap gap-2 pt-2">
+          <button
+            type="submit"
+            disabled={saving || readingAvatar}
+            className="inline-flex min-h-[44px] flex-1 cursor-pointer items-center justify-center gap-2 rounded-full bg-[#6F1F3B] px-5 py-2 text-sm font-bold text-[#FFF0F5] hover:bg-[#3A071F] disabled:opacity-60"
+          >
+            {isEditMode ? <Pencil className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+            <span>
+              {saving ? 'Đang lưu...' : isEditMode ? 'Lưu cập nhật' : 'Thêm nhân vật'}
+            </span>
+          </button>
+          {isEditMode && (
+            <button
+              type="button"
+              onClick={handleOpenEditCharTab}
+              className="min-h-[44px] cursor-pointer rounded-full border border-[#B65A7C]/35 px-5 py-2 text-xs font-semibold text-[#6F1F3B] hover:bg-white"
+            >
+              Hủy
+            </button>
+          )}
+        </div>
+      </form>
+    </div>
+  );
 
   return (
     <motion.div
@@ -312,18 +562,32 @@ export const AdminPage: React.FC<AdminPageProps> = ({
             </button>
           )}
 
+          {/* 4 Main Admin Navigation Buttons */}
           <div className="flex flex-wrap items-center gap-1 rounded-2xl border border-[#B65A7C]/25 bg-[#FFF0F5]/80 p-1">
             <button
               type="button"
-              onClick={() => setTab('chars')}
+              onClick={handleOpenAddChar}
               className={`inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap ${
-                tab === 'chars'
+                tab === 'add_char'
                   ? 'bg-[#6F1F3B] text-[#FFF0F5]'
                   : 'text-[#6F1F3B] hover:bg-[#E2A6BA]/30'
               }`}
             >
-              <Users className="h-3.5 w-3.5" />
-              <span>Nhân vật ({characters.length})</span>
+              <UserPlus className="h-3.5 w-3.5" />
+              <span>Thêm nhân vật</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleOpenEditCharTab}
+              className={`inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap ${
+                tab === 'edit_char'
+                  ? 'bg-[#6F1F3B] text-[#FFF0F5]'
+                  : 'text-[#6F1F3B] hover:bg-[#E2A6BA]/30'
+              }`}
+            >
+              <Pencil className="h-3.5 w-3.5" />
+              <span>Sửa nhân vật ({characters.length})</span>
             </button>
 
             <button
@@ -353,151 +617,31 @@ export const AdminPage: React.FC<AdminPageProps> = ({
             >
               <Bell className="h-3.5 w-3.5" />
               <span>
-                Thông báo ({unreadCount > 0 ? `${unreadCount} mới` : notifications.length})
+                {unreadCount > 0 ? `Thông báo (${unreadCount} mới)` : 'Thông báo'}
               </span>
             </button>
           </div>
         </div>
       </div>
 
-      {/* TAB 1: CHARACTERS */}
-      {tab === 'chars' && (
-        <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
-          <form
-            onSubmit={handleCharSubmit}
-            className="space-y-4 rounded-3xl border border-[#B65A7C]/25 bg-[#FFF0F5]/90 p-6 shadow-sm lg:col-span-5"
-          >
-            <h2 className="font-cute text-lg font-bold text-[#3A071F]">
-              {editingCharId ? 'Chỉnh sửa nhân vật' : 'Thêm nhân vật mới'}
-            </h2>
+      {/* PAGE 1: ADD CHARACTER (Dedicated View) */}
+      {tab === 'add_char' && renderCharacterForm(false)}
 
-            <div className="flex items-center gap-4">
-              <AvatarFrame src={charAvatar} alt={charName || 'Avatar'} size="sm" />
-              <div className="min-w-0 flex-1 space-y-2">
-                <label className="inline-flex min-h-[40px] cursor-pointer items-center gap-2 rounded-full border border-[#B65A7C]/35 bg-white px-4 py-1.5 text-xs font-semibold text-[#6F1F3B] hover:bg-[#E2A6BA]/25">
-                  <Upload className="h-3.5 w-3.5" />
-                  <span>Tải ảnh lên</span>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handleAvatarUpload}
-                    className="hidden"
-                  />
-                </label>
-                <div className="flex flex-wrap gap-1.5">
-                  {PRESET_AVATARS.map((p) => (
-                    <button
-                      key={p.url}
-                      type="button"
-                      onClick={() => setCharAvatar(p.url)}
-                      className="cursor-pointer rounded-lg border border-[#E2A6BA] bg-white px-2 py-0.5 text-[11px] font-medium text-[#6F1F3B] hover:bg-[#E2A6BA]/30"
-                    >
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
-                URL ảnh đại diện
-              </label>
-              <input
-                type="text"
-                value={charAvatar}
-                onChange={(e) => setCharAvatar(e.target.value)}
-                className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
-                Tên nhân vật *
-              </label>
-              <input
-                type="text"
-                required
-                maxLength={80}
-                value={charName}
-                onChange={(e) => setCharName(e.target.value)}
-                className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
-                Hashtag (cách nhau bởi dấu phẩy)
-              </label>
-              <input
-                type="text"
-                value={charHashtags}
-                onChange={(e) => setCharHashtags(e.target.value)}
-                className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">Slogan *</label>
-              <input
-                type="text"
-                required
-                maxLength={200}
-                value={charSlogan}
-                onChange={(e) => setCharSlogan(e.target.value)}
-                className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
-                Cốt truyện
-              </label>
-              <textarea
-                rows={4}
-                maxLength={5000}
-                value={charStory}
-                onChange={(e) => setCharStory(e.target.value)}
-                className="w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
-                Link mua kẹo (gắn vào nút Mua Kẹo Ở Đây)
-              </label>
-              <input
-                type="text"
-                maxLength={500}
-                value={charLink}
-                onChange={(e) => setCharLink(e.target.value)}
-                placeholder="https://..."
-                className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
-              />
-            </div>
-
-            <div className="flex flex-wrap gap-2 pt-2">
-              <button
-                type="submit"
-                disabled={saving}
-                className="inline-flex min-h-[44px] flex-1 cursor-pointer items-center justify-center gap-2 rounded-full bg-[#6F1F3B] px-5 py-2 text-sm font-bold text-[#FFF0F5] hover:bg-[#3A071F] disabled:opacity-60"
-              >
-                <Plus className="h-4 w-4" />
-                <span>{editingCharId ? 'Lưu cập nhật' : 'Thêm nhân vật'}</span>
-              </button>
-              {editingCharId && (
-                <button
-                  type="button"
-                  onClick={resetCharForm}
-                  className="min-h-[44px] cursor-pointer rounded-full border border-[#B65A7C]/35 px-4 py-2 text-xs font-semibold text-[#6F1F3B] hover:bg-white"
-                >
-                  Hủy
-                </button>
-              )}
-            </div>
-          </form>
-
-          <div className="space-y-3 lg:col-span-7">
+      {/* PAGE 2: EDIT / MANAGE CHARACTERS (List or Dedicated Edit View) */}
+      {tab === 'edit_char' && (
+        editingCharId ? (
+          renderCharacterForm(true)
+        ) : characters.length === 0 ? (
+          <div className="rounded-3xl border border-[#B65A7C]/20 bg-[#FFF0F5]/85 p-10 text-center">
+            <p className="font-cute text-lg font-bold text-[#3A071F]">
+              Chưa có nhân vật nào
+            </p>
+            <p className="mt-1 text-xs text-[#6F1F3B]/80">
+              Hãy bấm nút “Thêm nhân vật” để tạo nhân vật đầu tiên của bạn.
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             {characters.map((c) => (
               <div
                 key={c.id}
@@ -521,9 +665,10 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                     type="button"
                     onClick={() => handleEditChar(c)}
                     aria-label={`Sửa ${c.name}`}
-                    className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-[#E2A6BA] bg-white text-[#6F1F3B] hover:bg-[#E2A6BA]/30"
+                    className="inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-full border border-[#E2A6BA] bg-white px-3 py-1.5 text-xs font-semibold text-[#6F1F3B] hover:bg-[#E2A6BA]/30"
                   >
-                    <Pencil className="h-4 w-4" />
+                    <Pencil className="h-3.5 w-3.5" />
+                    <span>Sửa</span>
                   </button>
                   <button
                     type="button"
@@ -531,7 +676,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                       setPendingDelete({ kind: 'character', id: c.id, label: c.name })
                     }
                     aria-label={`Xóa ${c.name}`}
-                    className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-[#E2A6BA] bg-white text-[#6F1F3B] hover:bg-[#3A071F] hover:text-[#FFF0F5]"
+                    className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full border border-[#E2A6BA] bg-white text-[#6F1F3B] hover:bg-[#3A071F] hover:text-[#FFF0F5]"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -539,10 +684,10 @@ export const AdminPage: React.FC<AdminPageProps> = ({
               </div>
             ))}
           </div>
-        </div>
+        )
       )}
 
-      {/* TAB 2: MUSIC */}
+      {/* PAGE 3: MUSIC */}
       {tab === 'music' && (
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
           <form
@@ -555,7 +700,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
 
             <div>
               <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
-                Tên bài hát *
+                Tên bài hát * (bạn tự đặt tuỳ ý, không bắt buộc giống link)
               </label>
               <input
                 type="text"
@@ -563,6 +708,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                 maxLength={100}
                 value={trackTitle}
                 onChange={(e) => setTrackTitle(e.target.value)}
+                placeholder="Nhập tên bài hát bạn muốn hiển thị..."
                 className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
               />
             </div>
@@ -578,58 +724,101 @@ export const AdminPage: React.FC<AdminPageProps> = ({
               />
             </div>
 
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
-                Cảm xúc / Thể loại
-              </label>
-              <input
-                type="text"
-                maxLength={100}
-                value={trackMood}
-                onChange={(e) => setTrackMood(e.target.value)}
-                className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
-              />
+            <div className="space-y-2 rounded-2xl border border-[#B65A7C]/20 bg-white/75 p-3.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-[#6F1F3B]">
+                  Nhạc từ máy (tối đa 50 MB)
+                </span>
+                <label className="inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-full border border-[#B65A7C]/35 bg-white px-3.5 py-1 text-xs font-semibold text-[#6F1F3B] hover:bg-[#E2A6BA]/25">
+                  <Upload className="h-3.5 w-3.5" />
+                  <span>{readingAudio ? 'Đang xử lý...' : 'Chọn nhạc từ máy'}</span>
+                  <input
+                    type="file"
+                    accept="audio/*,.mp3,.m4a,.wav,.ogg,.aac,.flac"
+                    onChange={handleAudioFileUpload}
+                    disabled={readingAudio}
+                    className="hidden"
+                  />
+                </label>
+              </div>
+
+              {pendingAudioFile && (
+                <div className="flex items-center justify-between gap-2 rounded-xl bg-[#E2A6BA]/25 px-3 py-2 text-xs text-[#3A071F]">
+                  <span className="truncate font-semibold">
+                    {pendingAudioFile.fileName} (
+                    {(pendingAudioFile.sizeBytes / (1024 * 1024)).toFixed(2)} MB)
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setPendingAudioFile(null)}
+                    className="shrink-0 cursor-pointer font-bold text-[#6F1F3B] hover:underline"
+                  >
+                    Gỡ tệp
+                  </button>
+                </div>
+              )}
+
+              {!pendingAudioFile && existingChunksUrl && (
+                <div className="flex items-center justify-between gap-2 rounded-xl bg-[#E2A6BA]/25 px-3 py-2 text-xs text-[#3A071F]">
+                  <span className="truncate font-semibold">
+                    Đang dùng tệp nhạc đã tải lên máy chủ
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setExistingChunksUrl('')}
+                    className="shrink-0 cursor-pointer font-bold text-[#6F1F3B] hover:underline"
+                  >
+                    Gỡ tệp
+                  </button>
+                </div>
+              )}
+
+              <div>
+                <label className="mb-1 inline-flex items-center gap-1 text-xs font-semibold text-[#6F1F3B]">
+                  <Link2 className="h-3.5 w-3.5" />
+                  <span>Hoặc dán link nhạc (MP3 / Google Drive)</span>
+                </label>
+                <input
+                  type="text"
+                  maxLength={500}
+                  value={trackUrl}
+                  onChange={(e) => {
+                    setTrackError(null);
+                    setPendingAudioFile(null);
+                    setExistingChunksUrl('');
+                    setTrackUrl(e.target.value);
+                  }}
+                  placeholder="https://drive.google.com/file/d/... hoặc link .mp3"
+                  className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
+                />
+                <p className="mt-1 text-[11px] text-[#B65A7C]">
+                  Link Google Drive cần bật chia sẻ: Bất kỳ ai có đường liên kết.
+                </p>
+              </div>
             </div>
 
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
-                Link MP3 / Audio
-              </label>
-              <input
-                type="url"
-                maxLength={500}
-                value={trackUrl}
-                onChange={(e) => setTrackUrl(e.target.value)}
-                className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
-              />
-            </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
-                Giai điệu hộp nhạc dự phòng
-              </label>
-              <select
-                value={trackPreset}
-                onChange={(e) =>
-                  setTrackPreset(e.target.value as MusicTrack['synthPreset'])
-                }
-                className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
-              >
-                <option value="rose_waltz">Valse Hoa Hồng</option>
-                <option value="cotton_lullaby">Khúc Ru Kẹo Bông</option>
-                <option value="velvet_nocturne">Dạ Khúc Nhung</option>
-                <option value="petal_breeze">Gió Cánh Hoa</option>
-              </select>
-            </div>
+            {trackError && (
+              <p className="rounded-xl border border-[#6F1F3B]/30 bg-white px-3 py-2 text-xs font-semibold text-[#6F1F3B]">
+                {trackError}
+              </p>
+            )}
 
             <div className="flex flex-wrap gap-2 pt-2">
               <button
                 type="submit"
-                disabled={saving}
+                disabled={saving || readingAudio}
                 className="inline-flex min-h-[44px] flex-1 cursor-pointer items-center justify-center gap-2 rounded-full bg-[#6F1F3B] px-5 py-2 text-sm font-bold text-[#FFF0F5] hover:bg-[#3A071F] disabled:opacity-60"
               >
                 <Plus className="h-4 w-4" />
-                <span>{editingTrackId ? 'Lưu bài hát' : 'Thêm bài hát'}</span>
+                <span>
+                  {saving
+                    ? uploadProgress !== null
+                      ? `Đang tải lên... ${uploadProgress}%`
+                      : 'Đang lưu...'
+                    : editingTrackId
+                      ? 'Lưu bài hát'
+                      : 'Thêm bài hát'}
+                </span>
               </button>
               {editingTrackId && (
                 <button
@@ -673,11 +862,15 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                     <h3 className="font-cute truncate text-base font-bold text-[#3A071F]">
                       {t.title}
                     </h3>
-                    <p className="truncate text-xs text-[#6F1F3B]/80">
-                      {t.artist} · {t.mood}
-                    </p>
+                    <p className="truncate text-xs text-[#6F1F3B]/80">{t.artist}</p>
                     {t.audioUrl && (
-                      <p className="mt-0.5 truncate text-[11px] text-[#B65A7C]">{t.audioUrl}</p>
+                      <p className="mt-0.5 truncate text-[11px] text-[#B65A7C]">
+                        {t.audioUrl.startsWith('chunks:')
+                          ? 'Tệp nhạc tải lên từ máy'
+                          : t.audioUrl.startsWith('/api/drive-media')
+                            ? 'Link Google Drive'
+                            : t.audioUrl}
+                      </p>
                     )}
                   </div>
 
@@ -708,13 +901,28 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         </div>
       )}
 
-      {/* TAB 3: NOTIFICATIONS */}
+      {/* PAGE 4: NOTIFICATIONS */}
       {tab === 'notifications' && (
         <div className="space-y-3 rounded-3xl border border-[#B65A7C]/25 bg-[#FFF0F5]/90 p-6 shadow-sm">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-cute text-lg font-bold text-[#3A071F]">
               Thông báo tim &amp; bình luận gửi về hminhthom203@gmail.com
             </h2>
+            {notifications.length > 0 && (
+              <button
+                type="button"
+                onClick={() =>
+                  setPendingDelete({
+                    kind: 'all_notifications',
+                    count: notifications.length,
+                  })
+                }
+                className="inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 rounded-full border border-[#6F1F3B]/35 bg-white px-3.5 py-1 text-xs font-bold text-[#6F1F3B] hover:bg-[#3A071F] hover:text-[#FFF0F5]"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                <span>Xoá tất cả</span>
+              </button>
+            )}
           </div>
 
           {notifications.length === 0 ? (
@@ -759,16 +967,6 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                   </div>
 
                   <div className="flex shrink-0 items-center gap-1">
-                    {!n.read && (
-                      <button
-                        type="button"
-                        onClick={() => onMarkNotificationRead(n.id)}
-                        aria-label="Đánh dấu đã đọc"
-                        className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-[#6F1F3B] hover:bg-[#E2A6BA]/30"
-                      >
-                        <Check className="h-4 w-4" />
-                      </button>
-                    )}
                     <button
                       type="button"
                       onClick={() => setPendingDelete({ kind: 'notification', id: n.id })}

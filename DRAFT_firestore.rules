@@ -44,8 +44,8 @@ service cloud.firestore {
       ])
       && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
       && data.avatar is string && data.avatar.size() >= 1 && data.avatar.size() <= 200000
-      && data.hashtags is list && data.hashtags.size() >= 1 && data.hashtags.size() <= 10
-      && data.hashtags[0] is string && data.hashtags[0].size() >= 1 && data.hashtags[0].size() <= 40
+      && data.hashtags is list && data.hashtags.size() <= 10
+      && (data.hashtags.size() == 0 || (data.hashtags[0] is string && data.hashtags[0].size() >= 1 && data.hashtags[0].size() <= 40))
       && data.slogan is string && data.slogan.size() >= 1 && data.slogan.size() <= 200
       && data.story is string && data.story.size() >= 1 && data.story.size() <= 5000
       && data.link is string && data.link.size() <= 500
@@ -96,6 +96,15 @@ service cloud.firestore {
       && data.updatedAt is timestamp;
     }
 
+    function isValidTrackChunk(data) {
+      return data.keys().hasAll(['index', 'data', 'mimeType', 'createdAt'])
+      && data.keys().hasOnly(['index', 'data', 'mimeType', 'createdAt'])
+      && data.index is int && data.index >= 0 && data.index <= 200
+      && data.data is string && data.data.size() >= 1 && data.data.size() <= 900000
+      && data.mimeType is string && data.mimeType.size() >= 1 && data.mimeType.size() <= 80
+      && data.createdAt is timestamp;
+    }
+
     function isValidNotification(data) {
       return data.keys().hasAll([
         'type', 'characterId', 'characterName', 'actorUid', 'actorName',
@@ -108,7 +117,7 @@ service cloud.firestore {
       && data.type in ['like', 'comment']
       && isValidId(data.characterId)
       && data.characterName is string && data.characterName.size() >= 1 && data.characterName.size() <= 80
-      && data.actorUid is string && data.actorUid == request.auth.uid
+      && data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128
       && data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 80
       && data.message is string && data.message.size() >= 1 && data.message.size() <= 600
       && data.recipientEmail is string && data.recipientEmail == 'hminhthom203@gmail.com'
@@ -267,6 +276,27 @@ service cloud.firestore {
         && incoming().updatedAt == request.time;
 
       allow delete: if isAdmin() && isValidId(trackId);
+
+      match /chunks/{chunkId} {
+        allow get: if isValidId(trackId) && isValidId(chunkId);
+        allow list: if isValidId(trackId);
+
+        allow create: if isAdmin()
+          && isValidId(trackId)
+          && isValidId(chunkId)
+          && isValidTrackChunk(incoming())
+          && incoming().createdAt == request.time
+          && exists(/databases/$(database)/documents/tracks/$(trackId));
+
+        allow update: if isAdmin()
+          && isValidId(trackId)
+          && isValidId(chunkId)
+          && isValidTrackChunk(incoming())
+          && incoming().diff(existing()).affectedKeys().hasOnly(['index', 'data', 'mimeType'])
+          && incoming().createdAt == existing().createdAt;
+
+        allow delete: if isAdmin() && isValidId(trackId) && isValidId(chunkId);
+      }
     }
 
     // Admin Notifications
@@ -277,6 +307,7 @@ service cloud.firestore {
       allow create: if isVerifiedSignedIn()
         && isValidId(notifId)
         && isValidNotification(incoming())
+        && incoming().actorUid == request.auth.uid
         && incoming().read == false
         && incoming().createdAt == request.time
         && exists(/databases/$(database)/documents/characters/$(incoming().characterId));
@@ -285,6 +316,13 @@ service cloud.firestore {
         && isValidId(notifId)
         && isValidNotification(incoming())
         && incoming().diff(existing()).affectedKeys().hasOnly(['read', 'emailStatus'])
+        && incoming().type == existing().type
+        && incoming().characterId == existing().characterId
+        && incoming().characterName == existing().characterName
+        && incoming().actorUid == existing().actorUid
+        && incoming().actorName == existing().actorName
+        && incoming().message == existing().message
+        && incoming().recipientEmail == existing().recipientEmail
         && incoming().createdAt == existing().createdAt;
 
       allow delete: if isValidId(notifId) && (

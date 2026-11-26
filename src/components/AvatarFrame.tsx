@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { Sparkles } from 'lucide-react';
 
 interface AvatarFrameProps {
@@ -15,6 +15,30 @@ export const AvatarFrame: React.FC<AvatarFrameProps> = ({
   className = '',
 }) => {
   const [imgError, setImgError] = useState(false);
+  const [fallbackSrc, setFallbackSrc] = useState<string | null>(null);
+
+  useEffect(() => {
+    setImgError(false);
+    setFallbackSrc(null);
+  }, [src]);
+
+  const activeSrc = fallbackSrc || src;
+
+  const handleImgError = () => {
+    if (!fallbackSrc && src.startsWith('/api/drive-media')) {
+      try {
+        const parsed = new URL(src, 'http://localhost');
+        const id = parsed.searchParams.get('id');
+        if (id) {
+          setFallbackSrc(`https://drive.google.com/thumbnail?id=${encodeURIComponent(id)}&sz=w1000`);
+          return;
+        }
+      } catch {
+        // ignore URL parse error
+      }
+    }
+    setImgError(true);
+  };
 
   const dims =
     size === 'sm'
@@ -39,12 +63,12 @@ export const AvatarFrame: React.FC<AvatarFrameProps> = ({
       >
         {/* Inner ivory pearl bevel */}
         <div className="h-full w-full overflow-hidden rounded-full bg-[#FFF0F5] p-0.5 ring-1 ring-[#FFF0F5]">
-          {!imgError && src ? (
+          {!imgError && activeSrc ? (
             <img
-              src={src}
+              src={activeSrc}
               alt={alt}
               referrerPolicy="no-referrer"
-              onError={() => setImgError(true)}
+              onError={handleImgError}
               className="h-full w-full rounded-full object-cover transition-transform duration-500 group-hover:scale-105"
             />
           ) : (

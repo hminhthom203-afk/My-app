@@ -192,6 +192,34 @@
         "updatedAt"
       ]
     },
+    "TrackAudioChunk": {
+      "title": "TrackAudioChunk",
+      "description": "Base64-encoded chunk of a locally uploaded audio file for a MusicTrack.",
+      "type": "object",
+      "properties": {
+        "index": {
+          "type": "integer",
+          "description": "Zero-based chunk order index."
+        },
+        "data": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 900000,
+          "description": "Base64 slice of the audio binary."
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "description": "Audio MIME type (e.g., audio/mpeg)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["index", "data", "mimeType", "createdAt"]
+    },
     "AdminNotification": {
       "title": "AdminNotification",
       "description": "Notification sent when a user likes or comments on a character.",
@@ -311,6 +339,10 @@
     "/tracks/{trackId}": {
       "schema": { "$ref": "#/entities/MusicTrack" },
       "description": "Music playlist tracks managed by admin."
+    },
+    "/tracks/{trackId}/chunks/{chunkId}": {
+      "schema": { "$ref": "#/entities/TrackAudioChunk" },
+      "description": "Chunked audio bytes for locally uploaded music tracks."
     },
     "/notifications/{notifId}": {
       "schema": { "$ref": "#/entities/AdminNotification" },

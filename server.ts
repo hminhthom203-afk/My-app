@@ -69,6 +69,88 @@ async function startServer() {
     }
   });
 
+  app.get('/api/drive-media', async (req, res) => {
+    const id = String(req.query.id || '').trim();
+    const kind = req.query.kind === 'image' ? 'image' : 'audio';
+
+    if (!/^[a-zA-Z0-9_-]{10,120}$/.test(id)) {
+      res.status(400).json({ error: 'Invalid Google Drive file ID' });
+      return;
+    }
+
+    const forwardHeaders: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0',
+    };
+    if (typeof req.headers.range === 'string' && req.headers.range.trim()) {
+      forwardHeaders.Range = req.headers.range;
+    }
+
+    const fetchDriveUrl = async (targetUrl: string) =>
+      fetch(targetUrl, {
+        headers: forwardHeaders,
+        redirect: 'follow',
+      });
+
+    try {
+      let upstream = await fetchDriveUrl(
+        `https://drive.google.com/uc?export=download&id=${encodeURIComponent(id)}`
+      );
+      let contentType = upstream.headers.get('content-type') || '';
+
+      if (contentType.includes('text/html')) {
+        const html = await upstream.text();
+        const confirmMatch = html.match(/name="confirm"\s+value="([^"]+)"/i) ||
+          html.match(/[?&]confirm=([a-zA-Z0-9_-]+)/i);
+        const uuidMatch = html.match(/name="uuid"\s+value="([^"]+)"/i);
+
+        if (confirmMatch) {
+          const confirmUrl = new URL('https://drive.usercontent.google.com/download');
+          confirmUrl.searchParams.set('id', id);
+          confirmUrl.searchParams.set('export', 'download');
+          confirmUrl.searchParams.set('confirm', confirmMatch[1]);
+          if (uuidMatch) {
+            confirmUrl.searchParams.set('uuid', uuidMatch[1]);
+          }
+          upstream = await fetchDriveUrl(confirmUrl.toString());
+          contentType = upstream.headers.get('content-type') || '';
+        }
+
+        if ((contentType.includes('text/html') || !upstream.ok) && kind === 'image') {
+          upstream = await fetchDriveUrl(
+            `https://drive.google.com/thumbnail?id=${encodeURIComponent(id)}&sz=w1200`
+          );
+          contentType = upstream.headers.get('content-type') || '';
+        }
+      }
+
+      if (!upstream.ok || contentType.includes('text/html') || !upstream.body) {
+        res.status(404).json({
+          error:
+            'Không thể tải tệp từ Google Drive. Hãy đảm bảo tệp được bật chia sẻ công khai (Bất kỳ ai có đường liên kết).',
+        });
+        return;
+      }
+
+      res.status(upstream.status);
+      if (contentType) res.setHeader('Content-Type', contentType);
+      const contentLength = upstream.headers.get('content-length');
+      if (contentLength) res.setHeader('Content-Length', contentLength);
+      const contentRange = upstream.headers.get('content-range');
+      if (contentRange) res.setHeader('Content-Range', contentRange);
+      res.setHeader(
+        'Accept-Ranges',
+        upstream.headers.get('accept-ranges') || 'bytes'
+      );
+      res.setHeader('Cache-Control', 'public, max-age=3600');
+
+      const { Readable } = await import('stream');
+      Readable.fromWeb(upstream.body as unknown as import('stream/web').ReadableStream).pipe(res);
+    } catch (err) {
+      console.error('Drive media proxy error:', err);
+      res.status(502).json({ error: 'Không thể kết nối tới Google Drive.' });
+    }
+  });
+
   if (process.env.NODE_ENV === 'production') {
     const distDir = path.resolve(__dirname, 'dist');
     app.use(express.static(distDir));

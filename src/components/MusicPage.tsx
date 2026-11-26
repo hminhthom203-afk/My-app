@@ -75,7 +75,7 @@ export const MusicPage: React.FC<MusicPageProps> = ({
                 {activeTrack.title}
               </h2>
               <p className="truncate text-xs text-[#E2A6BA]/85">
-                {activeTrack.artist} · {activeTrack.mood}
+                {activeTrack.artist}
               </p>
             </div>
           </div>
@@ -182,7 +182,7 @@ export const MusicPage: React.FC<MusicPageProps> = ({
                     <div className="min-w-0">
                       <p className="truncate font-semibold text-[#3A071F]">{track.title}</p>
                       <p className="truncate text-xs text-[#6F1F3B]/80">
-                        {track.artist} · {track.mood}
+                        {track.artist}
                       </p>
                     </div>
                   </div>
