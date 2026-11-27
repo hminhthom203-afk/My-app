@@ -610,24 +610,6 @@ export const AdminPage: React.FC<AdminPageProps> = ({
           <div className="flex flex-wrap items-center gap-1 rounded-2xl border border-[#B65A7C]/25 bg-[#FFF0F5]/80 p-1">
             <button
               type="button"
-              onClick={() => {
-                setTab('notifications');
-                void onMarkAllNotificationsRead();
-              }}
-              className={`inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap ${
-                tab === 'notifications'
-                  ? 'bg-[#6F1F3B] text-[#FFF0F5]'
-                  : 'text-[#6F1F3B] hover:bg-[#E2A6BA]/30'
-              }`}
-            >
-              <Bell className="h-3.5 w-3.5" />
-              <span>
-                {unreadCount > 0 ? `Quản Trị (${unreadCount} mới)` : 'Quản Trị'}
-              </span>
-            </button>
-
-            <button
-              type="button"
               onClick={handleOpenAddChar}
               className={`inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap ${
                 tab === 'add_char'
@@ -663,6 +645,24 @@ export const AdminPage: React.FC<AdminPageProps> = ({
             >
               <Music className="h-3.5 w-3.5" />
               <span>Âm nhạc ({tracks.length})</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setTab('notifications');
+                void onMarkAllNotificationsRead();
+              }}
+              className={`inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap ${
+                tab === 'notifications'
+                  ? 'bg-[#6F1F3B] text-[#FFF0F5]'
+                  : 'text-[#6F1F3B] hover:bg-[#E2A6BA]/30'
+              }`}
+            >
+              <Bell className="h-3.5 w-3.5" />
+              <span>
+                {unreadCount > 0 ? `Thông báo (${unreadCount} mới)` : 'Thông báo'}
+              </span>
             </button>
           </div>
         </div>

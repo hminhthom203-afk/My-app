@@ -122,8 +122,8 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
         </button>
       </div>
 
-      {/* Main Dedicated Profile Card - reduced opacity to 5% background */}
-      <div className="overflow-hidden rounded-3xl border border-white/80 bg-gradient-to-br from-[#F8F7FF]/5 via-[#F3E8FF]/5 to-[#EFF6FF]/5 p-6 shadow-[0_12px_36px_-18px_rgba(124,58,237,0.06)] backdrop-blur-md sm:p-10">
+      {/* Main Dedicated Profile Card - reduced opacity to 20% background */}
+      <div className="overflow-hidden rounded-3xl border border-white/80 bg-gradient-to-br from-[#F8F7FF]/20 via-[#F3E8FF]/15 to-[#EFF6FF]/20 p-6 shadow-[0_12px_36px_-18px_rgba(124,58,237,0.1)] backdrop-blur-md sm:p-10">
         <div className="flex flex-col items-center gap-8 md:flex-row md:items-start">
           {/* Left: Framed Avatar Only */}
           <div className="flex shrink-0 flex-col items-center">
@@ -137,13 +137,13 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
           {/* Right: Name, Hashtags, Slogan, Story, Link */}
           <div className="min-w-0 flex-1 text-center md:text-left">
             <h1
-              className="font-cute mb-3 text-3xl font-extrabold tracking-tight text-[#D8B4FE] sm:text-4xl"
+              className="font-cute mb-3 text-3xl font-extrabold tracking-tight text-[#5E0B33] sm:text-4xl"
               style={{
                 textWrap: 'balance',
                 paintOrder: 'stroke fill',
-                WebkitTextStroke: '3.5px #7C3AED',
+                WebkitTextStroke: '3.5px #FFFFFF',
                 textShadow:
-                  '0 0 12px rgba(124, 58, 237, 0.4), 0 2px 6px rgba(109, 40, 217, 0.25)',
+                  '0 0 12px rgba(255, 255, 255, 0.98), 0 2px 6px rgba(94, 11, 51, 0.2)',
               }}
             >
               {character.name}
@@ -169,11 +169,11 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
             </p>
 
             <div className="mb-6">
-              <h2 className="font-cute mb-2.5 flex items-center justify-center gap-2 text-lg font-bold text-[#E9D5FF] md:justify-start">
-                <BookOpen className="h-4 w-4 text-[#C4B5FD]" />
-                <span style={{ textShadow: '0 1px 4px rgba(0,0,0,0.3)' }}>Cốt truyện</span>
+              <h2 className="font-cute mb-2.5 flex items-center justify-center gap-2 text-lg font-bold text-[#3A071F] md:justify-start">
+                <BookOpen className="h-4 w-4 text-[#B65A7C]" />
+                <span>Cốt truyện</span>
               </h2>
-              <div className="space-y-3 text-left text-sm leading-relaxed text-white sm:text-base" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.4)' }}>
+              <div className="space-y-3 text-left text-sm leading-relaxed text-[#3A071F]/90 sm:text-base">
                 {character.story.split('\n').map((para, idx) =>
                   para.trim() ? <p key={idx}>{para}</p> : null
                 )}
@@ -198,8 +198,8 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
         </div>
       </div>
 
-      {/* Messages / Comments Section - 0% background transparency */}
-      <section className="mt-8 rounded-3xl border border-white/60 bg-transparent p-6 shadow-none sm:p-8">
+      {/* Messages / Comments Section */}
+      <section className="mt-8 rounded-3xl border border-white/60 bg-[#FFF0F5]/10 p-6 shadow-[0_0_14px_rgba(255,255,255,0.6)] backdrop-blur-sm sm:p-8">
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <h2 className="font-cute inline-flex flex-wrap items-center gap-2 rounded-2xl border border-[#FDA4AF] bg-[#FFE4E6]/85 px-4 py-2 text-lg font-bold text-[#9F1239] shadow-[0_0_10px_rgba(255,255,255,0.85)] sm:text-xl">
             <MessageCircle className="h-5 w-5 text-[#E11D48]" />

@@ -287,7 +287,7 @@ export default function App() {
           const data = d.data();
           return {
             id: d.id,
-            type: data.type === 'comment' ? 'comment' : data.type === 'chat' ? 'chat' : 'like',
+            type: data.type === 'comment' ? 'comment' : 'like',
             characterId: String(data.characterId || ''),
             characterName: String(data.characterName || ''),
             actorUid: String(data.actorUid || ''),
@@ -581,7 +581,7 @@ export default function App() {
   );
 
   const notifyAdmin = async (
-    type: 'like' | 'comment' | 'chat',
+    type: 'like' | 'comment',
     character: Character,
     message: string
   ) => {
@@ -919,11 +919,6 @@ export default function App() {
         createdAt: serverTimestamp(),
       });
       soundEngine.playSuccess();
-      void notifyAdmin(
-        'chat',
-        { id: input.characterId, name: input.characterName } as Character,
-        `[${input.tag}] ${input.content}`
-      );
       return true;
     } catch (err) {
       reportActionFailure(

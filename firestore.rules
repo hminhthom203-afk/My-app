@@ -116,7 +116,7 @@ service cloud.firestore {
         'type', 'characterId', 'characterName', 'actorUid', 'actorName',
         'message', 'recipientEmail', 'emailStatus', 'read', 'createdAt'
       ])
-      && data.type in ['like', 'comment', 'chat']
+      && data.type in ['like', 'comment']
       && isValidId(data.characterId)
       && data.characterName is string && data.characterName.size() >= 1 && data.characterName.size() <= 80
       && data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128

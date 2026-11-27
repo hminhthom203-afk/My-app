@@ -52,7 +52,7 @@ export interface MusicTrack {
 
 export interface AdminNotification {
   id: string;
-  type: 'like' | 'comment' | 'chat';
+  type: 'like' | 'comment';
   characterId: string;
   characterName: string;
   actorUid: string;
