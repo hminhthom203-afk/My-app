@@ -43,6 +43,16 @@
           "maxLength": 80,
           "description": "Display label for external link."
         },
+        "passcode": {
+          "type": "string",
+          "maxLength": 80,
+          "description": "Optional passcode required to open the character's external link."
+        },
+        "passcodeHint": {
+          "type": "string",
+          "maxLength": 200,
+          "description": "Optional hint displayed above the passcode input."
+        },
         "likesCount": {
           "type": "integer",
           "description": "Total number of hearts."
@@ -321,6 +331,54 @@
         }
       },
       "required": ["uid", "name", "email", "role", "createdAt", "updatedAt"]
+    },
+    "CommunityChatMessage": {
+      "title": "CommunityChatMessage",
+      "description": "Public community message, comment or character feedback.",
+      "type": "object",
+      "properties": {
+        "authorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "characterId": {
+          "type": "string",
+          "maxLength": 128
+        },
+        "characterName": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "tag": {
+          "type": "string",
+          "maxLength": 50
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "authorUid",
+        "authorName",
+        "characterId",
+        "characterName",
+        "tag",
+        "content",
+        "createdAt"
+      ]
     }
   },
   "firestore": {
@@ -335,6 +393,10 @@
     "/characters/{charId}/comments/{commentId}": {
       "schema": { "$ref": "#/entities/CharacterComment" },
       "description": "Comments on a character editable/deletable by their author or admin."
+    },
+    "/community_chats/{chatId}": {
+      "schema": { "$ref": "#/entities/CommunityChatMessage" },
+      "description": "Public community messages and character feedback."
     },
     "/tracks/{trackId}": {
       "schema": { "$ref": "#/entities/MusicTrack" },

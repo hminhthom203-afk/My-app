@@ -12,13 +12,28 @@
 }
 
 @layer base {
+  *,
+  html,
+  body {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  *::-webkit-scrollbar,
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+
   html,
   body {
     max-width: 100%;
     overflow-x: hidden;
     font-family: var(--font-body);
     color: #3A071F;
-    background-color: #FFF0F5;
+    background-color: #FFF5F8;
   }
 
   h1, h2, h3, .font-cute {
@@ -65,19 +80,4 @@
   .animate-aura {
     animation: none !important;
   }
-}
-
-/* Custom subtle rose scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-}
-::-webkit-scrollbar-track {
-  background: #FFF0F5;
-}
-::-webkit-scrollbar-thumb {
-  background: #E2A6BA;
-  border-radius: 999px;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: #B65A7C;
 }

@@ -42,7 +42,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     if (currentUser && !currentUser.emailVerified) {
       setAwaitingVerification(true);
       setInfo(
-        `Tài khoản ${currentUser.email} hiện chưa xác minh Gmail nên chưa thể thả tim hoặc bình luận. Hãy mở Gmail bấm vào liên kết xác minh (kiểm tra cả mục Thư rác / Spam), rồi bấm "Tôi đã xác minh email".`
+        `Tài khoản ${currentUser.email} hiện chưa xác minh Gmail nên chưa thể thả tim hoặc gửi lời nhắn. Hãy mở Gmail bấm vào liên kết xác minh (kiểm tra cả mục Thư rác / Spam), rồi bấm "Tôi đã xác minh email".`
       );
     } else {
       setAwaitingVerification(false);

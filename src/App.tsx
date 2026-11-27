@@ -35,6 +35,7 @@ import {
   AppView,
   Character,
   CharacterComment,
+  CommunityChatMessage,
   MusicTrack,
   UserProfile,
 } from './types';
@@ -42,11 +43,12 @@ import { ADMIN_EMAIL, SEED_CHARACTERS } from './data/initialData';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { soundEngine } from './utils/soundEngine';
 import { normalizeMediaUrl } from './utils/mediaHelpers';
-import { PetalCanvas } from './components/PetalCanvas';
+import { getPastelTagClass, SLOGAN_BOX_CLASS } from './utils/pastelTags';
 import { IntroPage } from './components/IntroPage';
 import { AvatarFrame } from './components/AvatarFrame';
 import { Tilt3DCard } from './components/Tilt3DCard';
 import { CharacterDetailPage } from './components/CharacterDetailPage';
+import { ChatPage } from './components/ChatPage';
 import { MusicPage } from './components/MusicPage';
 import { MusicDock } from './components/MusicDock';
 import { AdminPage } from './components/AdminPage';
@@ -83,10 +85,11 @@ export default function App() {
   const [loadingChars, setLoadingChars] = useState(true);
   const [tracks, setTracks] = useState<MusicTrack[]>([]);
   const [comments, setComments] = useState<CharacterComment[]>([]);
+  const [chatMessages, setChatMessages] = useState<CommunityChatMessage[]>([]);
   const [notifications, setNotifications] = useState<AdminNotification[]>([]);
   const [likedIds, setLikedIds] = useState<Set<string>>(new Set());
   const [commentCounts, setCommentCounts] = useState<Record<string, number>>({});
-  const [previousListView, setPreviousListView] = useState<'gallery' | 'top'>('gallery');
+  const [previousListView, setPreviousListView] = useState<'gallery' | 'top' | 'chat' | 'liked'>('gallery');
 
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(null);
   const [authReady, setAuthReady] = useState(false);
@@ -107,6 +110,13 @@ export default function App() {
   const tracksRef = useRef<MusicTrack[]>([]);
   const currentTrackIdRef = useRef<string>('');
   const isShuffleRef = useRef<boolean>(false);
+  const navScrollRef = useRef<HTMLElement | null>(null);
+  const navDragRef = useRef({
+    isDown: false,
+    startX: 0,
+    scrollLeft: 0,
+    moved: false,
+  });
 
   useEffect(() => {
     tracksRef.current = tracks;
@@ -277,7 +287,7 @@ export default function App() {
           const data = d.data();
           return {
             id: d.id,
-            type: data.type === 'comment' ? 'comment' : 'like',
+            type: data.type === 'comment' ? 'comment' : data.type === 'chat' ? 'chat' : 'like',
             characterId: String(data.characterId || ''),
             characterName: String(data.characterName || ''),
             actorUid: String(data.actorUid || ''),
@@ -438,6 +448,34 @@ export default function App() {
     };
   }, [characters]);
 
+  // 9. Listen to Community Chats
+  useEffect(() => {
+    const q = query(collection(db, 'community_chats'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(
+      q,
+      (snap) => {
+        const list: CommunityChatMessage[] = snap.docs.map((d) => {
+          const data = d.data();
+          return {
+            id: d.id,
+            authorUid: String(data.authorUid || ''),
+            authorName: String(data.authorName || ''),
+            characterId: String(data.characterId || 'general'),
+            characterName: String(data.characterName || 'Góp ý chung'),
+            tag: String(data.tag || '💬 Góp ý'),
+            content: String(data.content || ''),
+            createdAt: tsToIso(data.createdAt),
+          };
+        });
+        setChatMessages(list);
+      },
+      (err) => {
+        handleFirestoreError(err, OperationType.LIST, 'community_chats');
+      }
+    );
+    return () => unsub();
+  }, []);
+
   const pickNextTrack = (
     list: MusicTrack[],
     activeId: string,
@@ -528,6 +566,10 @@ export default function App() {
       .slice(0, 5);
   }, [characters]);
 
+  const likedCharacters = useMemo(() => {
+    return characters.filter((c) => likedIds.has(c.id));
+  }, [characters, likedIds]);
+
   const selectedCharacter = useMemo(
     () => characters.find((c) => c.id === selectedCharId) || null,
     [characters, selectedCharId]
@@ -539,7 +581,7 @@ export default function App() {
   );
 
   const notifyAdmin = async (
-    type: 'like' | 'comment',
+    type: 'like' | 'comment' | 'chat',
     character: Character,
     message: string
   ) => {
@@ -607,11 +649,46 @@ export default function App() {
   const handleNavigate = (nextView: AppView) => {
     soundEngine.playPageTurn();
     setView(nextView);
-    window.scrollTo({ top: 0, behavior: 'smooth' });
+    window.scrollTo(0, 0);
+  };
+
+  const handleNavPointerDown = (e: React.PointerEvent<HTMLElement>) => {
+    if (e.pointerType !== 'mouse' || !navScrollRef.current) return;
+    navDragRef.current = {
+      isDown: true,
+      startX: e.clientX,
+      scrollLeft: navScrollRef.current.scrollLeft,
+      moved: false,
+    };
+  };
+
+  const handleNavPointerMove = (e: React.PointerEvent<HTMLElement>) => {
+    if (!navDragRef.current.isDown || !navScrollRef.current) return;
+    const dx = e.clientX - navDragRef.current.startX;
+    if (Math.abs(dx) > 4) {
+      navDragRef.current.moved = true;
+    }
+    if (navDragRef.current.moved) {
+      navScrollRef.current.scrollLeft = navDragRef.current.scrollLeft - dx;
+    }
+  };
+
+  const handleNavPointerEnd = () => {
+    navDragRef.current.isDown = false;
+    window.setTimeout(() => {
+      navDragRef.current.moved = false;
+    }, 0);
+  };
+
+  const handleNavClickCapture = (e: React.MouseEvent<HTMLElement>) => {
+    if (navDragRef.current.moved) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
   };
 
   const handleOpenDetail = async (charId: string) => {
-    if (view === 'gallery' || view === 'top') {
+    if (view === 'gallery' || view === 'top' || view === 'liked' || view === 'chat') {
       setPreviousListView(view);
     }
     soundEngine.playPageTurn();
@@ -772,7 +849,7 @@ export default function App() {
         err,
         OperationType.CREATE,
         path,
-        'Không thể gửi bình luận lên Firebase. Hãy đảm bảo Gmail của bạn đã xác minh.'
+        'Không thể gửi lời nhắn lên Firebase. Hãy đảm bảo Gmail của bạn đã xác minh.'
       );
       return false;
     }
@@ -796,7 +873,7 @@ export default function App() {
         err,
         OperationType.UPDATE,
         path,
-        'Không thể chỉnh sửa bình luận lúc này.'
+        'Không thể chỉnh sửa lời nhắn lúc này.'
       );
     }
   };
@@ -812,7 +889,65 @@ export default function App() {
         err,
         OperationType.DELETE,
         path,
-        'Không thể xoá bình luận lúc này.'
+        'Không thể xoá lời nhắn lúc này.'
+      );
+    }
+  };
+
+  // Community Chat Handlers
+  const handleSendChatMessage = async (input: {
+    characterId: string;
+    characterName: string;
+    tag: string;
+    content: string;
+  }): Promise<boolean> => {
+    if (!currentUser || !currentUser.emailVerified) {
+      setAuthModalOpen(true);
+      return false;
+    }
+    setActionError(null);
+    const chatId = `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+    const path = `community_chats/${chatId}`;
+    try {
+      await setDoc(doc(db, path), {
+        authorUid: currentUser.uid,
+        authorName: currentUser.name.slice(0, 80),
+        characterId: input.characterId.slice(0, 128),
+        characterName: input.characterName.slice(0, 80),
+        tag: input.tag.slice(0, 50),
+        content: input.content.slice(0, 500),
+        createdAt: serverTimestamp(),
+      });
+      soundEngine.playSuccess();
+      void notifyAdmin(
+        'chat',
+        { id: input.characterId, name: input.characterName } as Character,
+        `[${input.tag}] ${input.content}`
+      );
+      return true;
+    } catch (err) {
+      reportActionFailure(
+        err,
+        OperationType.CREATE,
+        path,
+        'Không thể gửi lời nhắn lên Góc Trò Chuyện. Hãy đảm bảo tài khoản đã xác minh Gmail.'
+      );
+      return false;
+    }
+  };
+
+  const handleDeleteChatMessage = async (chatId: string) => {
+    setActionError(null);
+    const path = `community_chats/${chatId}`;
+    try {
+      await deleteDoc(doc(db, path));
+      soundEngine.playChime();
+    } catch (err) {
+      reportActionFailure(
+        err,
+        OperationType.DELETE,
+        path,
+        'Không thể xoá lời nhắn lúc này.'
       );
     }
   };
@@ -1110,77 +1245,30 @@ export default function App() {
   }
 
   return (
-    <div className="relative min-h-screen w-full max-w-full overflow-x-hidden bg-gradient-to-br from-[#FFF0F5] via-[#F7DBE6] to-[#E2A6BA] text-[#3A071F]">
+    <div className="relative min-h-screen w-full max-w-full overflow-x-clip bg-[#FFF5F8] text-[#3A071F]">
       <div
         aria-hidden="true"
-        className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_15%_15%,rgba(255,240,245,0.9),transparent_48%),radial-gradient(circle_at_85%_80%,rgba(182,90,124,0.22),transparent_52%)]"
-      />
-      <PetalCanvas variant="main" />
+        className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-[#FFF5F8]"
+      >
+        <img
+          src="/assets/aistudio/b112e43a638cdf3ea1d624c6fe5f0842_3ae26b1b.jpg"
+          alt="Nền hoàng hôn thỏ hồng"
+          className="h-full w-full object-cover object-center opacity-40"
+        />
+      </div>
 
-      <header className="sticky top-0 z-30 border-b border-[#B65A7C]/20 bg-[#FFF0F5]/82 backdrop-blur-md">
-        <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-4 py-3 sm:gap-8 sm:px-6">
+      <header className="sticky top-0 z-30 bg-transparent">
+        <div className="relative z-10 mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 pt-3 pb-0 sm:gap-6 sm:px-6">
           <button
             type="button"
             onClick={() => handleNavigate('intro')}
-            className="font-cute cursor-pointer bg-gradient-to-r from-[#C23B72] via-[#E06D9A] to-[#B64874] bg-clip-text text-lg font-bold tracking-tight text-transparent drop-shadow-[0_1px_6px_rgba(224,109,154,0.3)] whitespace-nowrap shrink-0 sm:text-xl"
+            className="font-artistic cursor-pointer rounded-full border border-white/95 bg-[#FFD6E6]/55 px-4 py-1 text-xl font-bold tracking-wide text-[#7A1840] shadow-[0_0_12px_rgba(255,255,255,0.85)] transition-all hover:scale-105 hover:border-white hover:bg-[#FFD6E6]/75 whitespace-nowrap shrink-0 sm:text-2xl"
+            style={{
+              textShadow: '0 1px 8px rgba(255, 255, 255, 0.95), 0 1px 2px rgba(111, 31, 59, 0.2)',
+            }}
           >
             Ăn Kẹo Hong
           </button>
-
-          <nav className="hidden items-center gap-6 text-sm font-semibold text-[#6F1F3B] md:flex">
-            <button
-              type="button"
-              onClick={() => handleNavigate('gallery')}
-              className={`cursor-pointer transition-colors whitespace-nowrap shrink-0 hover:text-[#3A071F] ${
-                view === 'gallery' || (view === 'detail' && previousListView === 'gallery')
-                  ? 'text-[#3A071F] underline decoration-[#B65A7C] decoration-2 underline-offset-4'
-                  : ''
-              }`}
-            >
-              Nhân Vật
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNavigate('top')}
-              title="Top nhân vật được yêu thích nhất"
-              className={`cursor-pointer transition-colors whitespace-nowrap shrink-0 hover:text-[#3A071F] ${
-                view === 'top' || (view === 'detail' && previousListView === 'top')
-                  ? 'text-[#3A071F] underline decoration-[#B65A7C] decoration-2 underline-offset-4'
-                  : ''
-              }`}
-            >
-              Top Yêu Thích
-            </button>
-            <button
-              type="button"
-              onClick={() => handleNavigate('music')}
-              className={`cursor-pointer transition-colors whitespace-nowrap shrink-0 hover:text-[#3A071F] ${
-                view === 'music'
-                  ? 'text-[#3A071F] underline decoration-[#B65A7C] decoration-2 underline-offset-4'
-                  : ''
-              }`}
-            >
-              Âm Nhạc
-            </button>
-            {currentUser?.role === 'admin' && (
-              <button
-                type="button"
-                onClick={() => handleNavigate('admin')}
-                className={`inline-flex cursor-pointer items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 hover:text-[#3A071F] ${
-                  view === 'admin'
-                    ? 'text-[#3A071F] underline decoration-[#B65A7C] decoration-2 underline-offset-4'
-                    : ''
-                }`}
-              >
-                <span>Quản Trị</span>
-                {unreadNotificationsCount > 0 && (
-                  <span className="rounded-full bg-[#6F1F3B] px-2 py-0.5 text-[11px] font-bold text-[#FFF0F5] tabular-nums">
-                    {unreadNotificationsCount} mới
-                  </span>
-                )}
-              </button>
-            )}
-          </nav>
 
           <div className="flex shrink-0 items-center gap-2">
             {currentUser ? (
@@ -1192,13 +1280,13 @@ export default function App() {
                       soundEngine.playChime();
                       setAuthModalOpen(true);
                     }}
-                    className="inline-flex min-h-[36px] cursor-pointer items-center gap-1 rounded-full bg-[#6F1F3B] px-3 py-1 text-[11px] font-bold text-[#FFF0F5] shadow-sm transition-colors whitespace-nowrap hover:bg-[#3A071F]"
+                    className="inline-flex min-h-[36px] cursor-pointer items-center gap-1 rounded-full border border-white/95 bg-[#6F1F3B] px-3 py-1 text-[11px] font-bold text-[#FFF0F5] shadow-[0_0_10px_rgba(255,255,255,0.8)] transition-colors whitespace-nowrap hover:bg-[#3A071F]"
                   >
                     <MailWarning className="h-3.5 w-3.5" />
                     <span>Xác minh Gmail</span>
                   </button>
                 )}
-                <span className="hidden max-w-[140px] truncate text-xs font-semibold text-[#6F1F3B] sm:inline-flex sm:items-center sm:gap-1">
+                <span className="hidden max-w-[150px] truncate rounded-full border border-white/90 bg-white/40 px-3 py-1 text-xs font-semibold text-[#5E1131] shadow-[0_0_10px_rgba(255,255,255,0.75)] sm:inline-flex sm:items-center sm:gap-1">
                   {currentUser.role === 'admin' ? (
                     <ShieldCheck className="h-3.5 w-3.5 shrink-0 text-[#6F1F3B]" />
                   ) : (
@@ -1214,7 +1302,7 @@ export default function App() {
                     if (view === 'admin') setView('gallery');
                   }}
                   aria-label="Đăng xuất"
-                  className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-full border border-[#B65A7C]/35 bg-white/85 px-3.5 py-1.5 text-xs font-semibold text-[#6F1F3B] transition-colors whitespace-nowrap shrink-0 hover:bg-[#3A071F] hover:text-[#FFF0F5]"
+                  className="inline-flex min-h-[38px] cursor-pointer items-center gap-1.5 rounded-full border border-white/95 bg-[#FFD6E6]/55 px-3.5 py-1.5 text-xs font-semibold text-[#5E1131] shadow-[0_0_12px_rgba(255,255,255,0.85)] transition-all whitespace-nowrap shrink-0 hover:border-white hover:bg-[#3A071F] hover:text-[#FFF0F5]"
                 >
                   <LogOut className="h-3.5 w-3.5" />
                   <span>Đăng xuất</span>
@@ -1227,7 +1315,7 @@ export default function App() {
                   soundEngine.playChime();
                   setAuthModalOpen(true);
                 }}
-                className="inline-flex min-h-[40px] cursor-pointer items-center justify-center rounded-full bg-[#6F1F3B] px-4 py-2 text-xs font-bold text-[#FFF0F5] shadow-sm transition-colors whitespace-nowrap shrink-0 hover:bg-[#3A071F]"
+                className="inline-flex min-h-[38px] cursor-pointer items-center justify-center rounded-full border border-white/95 bg-[#FFD6E6]/55 px-4 py-1.5 text-xs font-bold text-[#7A1840] shadow-[0_0_12px_rgba(255,255,255,0.85)] transition-all whitespace-nowrap shrink-0 hover:border-white hover:bg-[#FFD6E6]/75"
               >
                 Đăng nhập
               </button>
@@ -1235,63 +1323,115 @@ export default function App() {
           </div>
         </div>
 
-        <nav className="flex items-center justify-center gap-5 border-t border-[#B65A7C]/15 px-4 py-2 text-xs font-semibold text-[#6F1F3B] md:hidden">
-          <button
-            type="button"
-            onClick={() => handleNavigate('gallery')}
-            className={`cursor-pointer whitespace-nowrap ${
-              view === 'gallery' || (view === 'detail' && previousListView === 'gallery')
-                ? 'text-[#3A071F] underline decoration-[#B65A7C] decoration-2 underline-offset-4'
-                : ''
-            }`}
+        {/* Dòng ngăn cách nằm giữa hàng Ăn Kẹo Hong / Đăng nhập và hàng điều hướng bên dưới */}
+        <div
+          aria-hidden="true"
+          className="relative z-10 flex items-center justify-center py-6 select-none sm:py-7"
+        >
+          <span
+            className="text-base leading-none font-bold tracking-[0.35em] text-white sm:text-lg"
+            style={{
+              paintOrder: 'stroke fill',
+              WebkitTextStroke: '1.5px #B81D5B',
+              textShadow:
+                '0 0 8px rgba(255, 255, 255, 0.98), 0 0 16px rgba(255, 255, 255, 0.85)',
+            }}
           >
-            Nhân Vật
-          </button>
-          <button
-            type="button"
-            onClick={() => handleNavigate('top')}
-            title="Top nhân vật được yêu thích nhất"
-            className={`cursor-pointer whitespace-nowrap ${
-              view === 'top' || (view === 'detail' && previousListView === 'top')
-                ? 'text-[#3A071F] underline decoration-[#B65A7C] decoration-2 underline-offset-4'
-                : ''
-            }`}
-          >
-            Top Yêu Thích
-          </button>
-          <button
-            type="button"
-            onClick={() => handleNavigate('music')}
-            className={`cursor-pointer whitespace-nowrap ${
-              view === 'music'
-                ? 'text-[#3A071F] underline decoration-[#B65A7C] decoration-2 underline-offset-4'
-                : ''
-            }`}
-          >
-            Âm Nhạc
-          </button>
-          {currentUser?.role === 'admin' && (
+            ✦ · ✦ · ✦
+          </span>
+        </div>
+
+        <nav
+          ref={navScrollRef}
+          aria-label="Điều hướng chính"
+          onPointerDown={handleNavPointerDown}
+          onPointerMove={handleNavPointerMove}
+          onPointerUp={handleNavPointerEnd}
+          onPointerCancel={handleNavPointerEnd}
+          onPointerLeave={handleNavPointerEnd}
+          onClickCapture={handleNavClickCapture}
+          className="relative z-10 mx-auto w-full max-w-6xl cursor-grab overflow-x-auto px-3 py-0 select-none active:cursor-grabbing sm:px-6"
+        >
+          <div className="mx-auto flex w-max flex-nowrap items-center gap-2 text-xs font-semibold text-[#6F1F3B] sm:gap-2.5 sm:text-sm">
             <button
               type="button"
-              onClick={() => handleNavigate('admin')}
-              className={`inline-flex cursor-pointer items-center gap-1 whitespace-nowrap ${
-                view === 'admin'
-                  ? 'text-[#3A071F] underline decoration-[#B65A7C] decoration-2 underline-offset-4'
-                  : ''
+              onClick={() => handleNavigate('gallery')}
+              className={`cursor-pointer rounded-full border px-3 py-1 transition-all whitespace-nowrap shrink-0 sm:px-3.5 sm:py-1.5 ${
+                view === 'gallery' || (view === 'detail' && previousListView === 'gallery')
+                  ? 'border-white bg-white/75 text-[#3A071F] shadow-[0_0_14px_rgba(255,255,255,0.95)]'
+                  : 'border-white/90 bg-white/35 text-[#5E1131] shadow-[0_0_10px_rgba(255,255,255,0.75)] hover:border-white hover:bg-white/65 hover:text-[#3A071F]'
               }`}
             >
-              <span>Quản Trị</span>
-              {unreadNotificationsCount > 0 && (
-                <span className="rounded-full bg-[#6F1F3B] px-1.5 py-0.5 text-[10px] font-bold text-[#FFF0F5] tabular-nums">
-                  {unreadNotificationsCount}
-                </span>
-              )}
+              Nhân Vật
             </button>
-          )}
+            <button
+              type="button"
+              onClick={() => handleNavigate('top')}
+              title="Top nhân vật được yêu thích nhất"
+              className={`cursor-pointer rounded-full border px-3 py-1 transition-all whitespace-nowrap shrink-0 sm:px-3.5 sm:py-1.5 ${
+                view === 'top' || (view === 'detail' && previousListView === 'top')
+                  ? 'border-white bg-white/75 text-[#3A071F] shadow-[0_0_14px_rgba(255,255,255,0.95)]'
+                  : 'border-white/90 bg-white/35 text-[#5E1131] shadow-[0_0_10px_rgba(255,255,255,0.75)] hover:border-white hover:bg-white/65 hover:text-[#3A071F]'
+              }`}
+            >
+              Top Yêu Thích
+            </button>
+            <button
+              type="button"
+              onClick={() => handleNavigate('chat')}
+              className={`cursor-pointer rounded-full border px-3 py-1 transition-all whitespace-nowrap shrink-0 sm:px-3.5 sm:py-1.5 ${
+                view === 'chat' || (view === 'detail' && previousListView === 'chat')
+                  ? 'border-white bg-white/75 text-[#3A071F] shadow-[0_0_14px_rgba(255,255,255,0.95)]'
+                  : 'border-white/90 bg-white/35 text-[#5E1131] shadow-[0_0_10px_rgba(255,255,255,0.75)] hover:border-white hover:bg-white/65 hover:text-[#3A071F]'
+              }`}
+            >
+              Trò Chuyện
+            </button>
+            <button
+              type="button"
+              onClick={() => handleNavigate('music')}
+              className={`cursor-pointer rounded-full border px-3 py-1 transition-all whitespace-nowrap shrink-0 sm:px-3.5 sm:py-1.5 ${
+                view === 'music'
+                  ? 'border-white bg-white/75 text-[#3A071F] shadow-[0_0_14px_rgba(255,255,255,0.95)]'
+                  : 'border-white/90 bg-white/35 text-[#5E1131] shadow-[0_0_10px_rgba(255,255,255,0.75)] hover:border-white hover:bg-white/65 hover:text-[#3A071F]'
+              }`}
+            >
+              Âm Nhạc
+            </button>
+            <button
+              type="button"
+              onClick={() => handleNavigate('liked')}
+              className={`cursor-pointer rounded-full border px-3 py-1 transition-all whitespace-nowrap shrink-0 sm:px-3.5 sm:py-1.5 ${
+                view === 'liked' || (view === 'detail' && previousListView === 'liked')
+                  ? 'border-white bg-white/75 text-[#3A071F] shadow-[0_0_14px_rgba(255,255,255,0.95)]'
+                  : 'border-white/90 bg-white/35 text-[#5E1131] shadow-[0_0_10px_rgba(255,255,255,0.75)] hover:border-white hover:bg-white/65 hover:text-[#3A071F]'
+              }`}
+            >
+              Đã Thích
+            </button>
+            {currentUser?.role === 'admin' && (
+              <button
+                type="button"
+                onClick={() => handleNavigate('admin')}
+                className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-3 py-1 transition-all whitespace-nowrap shrink-0 sm:px-3.5 sm:py-1.5 ${
+                  view === 'admin'
+                    ? 'border-white bg-white/75 text-[#3A071F] shadow-[0_0_14px_rgba(255,255,255,0.95)]'
+                    : 'border-white/90 bg-white/35 text-[#5E1131] shadow-[0_0_10px_rgba(255,255,255,0.75)] hover:border-white hover:bg-white/65 hover:text-[#3A071F]'
+                }`}
+              >
+                <span>Quản Trị</span>
+                {unreadNotificationsCount > 0 && (
+                  <span className="rounded-full bg-[#6F1F3B] px-1.5 py-0.5 text-[10px] font-bold text-[#FFF0F5] tabular-nums sm:px-2 sm:text-[11px]">
+                    {unreadNotificationsCount} mới
+                  </span>
+                )}
+              </button>
+            )}
+          </div>
         </nav>
       </header>
 
-      <main className="relative z-20 pt-6">
+      <main className="relative z-20 pt-6 sm:pt-7">
         {actionError && (
           <div className="mx-auto mb-4 w-full max-w-4xl px-4 sm:px-6">
             <div className="flex items-center justify-between gap-3 rounded-2xl border border-[#6F1F3B]/35 bg-white/95 px-4 py-3 text-xs font-semibold text-[#6F1F3B] shadow-sm">
@@ -1312,21 +1452,29 @@ export default function App() {
         )}
         {view === 'gallery' && (
           <motion.div
-            initial={{ opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.16, ease: 'easeOut' }}
             className="mx-auto w-full max-w-6xl px-4 pb-28 sm:px-6"
           >
-            <div className="mb-8 text-center">
+            <div className="mb-8 flex flex-col items-center text-center">
               <h1
-                className="font-cute mb-3 bg-gradient-to-r from-[#6F1F3B] via-[#B65A7C] to-[#8E2B4E] bg-clip-text text-3xl font-bold tracking-tight text-transparent drop-shadow-[0_2px_10px_rgba(182,90,124,0.22)] sm:text-5xl"
-                style={{ textWrap: 'balance' }}
+                className="font-artistic mb-3 text-4xl font-bold tracking-wide text-[#A8184B] sm:text-6xl"
+                style={{
+                  textWrap: 'balance',
+                  textShadow:
+                    '0 2px 14px rgba(255, 255, 255, 0.98), 0 0 24px rgba(255, 240, 245, 0.95), 0 2px 4px rgba(168, 24, 75, 0.2)',
+                }}
               >
                 Xem Và Mua Kẹo Nha
               </h1>
-              <p className="mx-auto max-w-2xl text-sm font-medium text-[#6F1F3B] sm:text-base">
-                Giữa muôn vàn cuộc gặp gỡ ngoài kia, cảm ơn bạn vì đã ghé qua nơi này
-              </p>
+              <div className="inline-flex items-center gap-3 rounded-full border border-[#B65A7C]/25 bg-white/80 px-5 py-1.5 shadow-sm backdrop-blur-sm">
+                <span aria-hidden="true" className="hidden h-px w-5 bg-[#B65A7C]/60 sm:block" />
+                <p className="text-xs font-semibold text-[#5E1131] sm:text-sm">
+                  Giữa muôn vàn cuộc gặp gỡ ngoài kia, cảm ơn bạn vì đã ghé qua nơi này
+                </p>
+                <span aria-hidden="true" className="hidden h-px w-5 bg-[#B65A7C]/60 sm:block" />
+              </div>
             </div>
 
             <div className="mb-8 flex flex-col items-stretch justify-between gap-4 rounded-3xl border border-[#B65A7C]/20 bg-[#FFF0F5]/80 p-4 backdrop-blur-sm md:flex-row md:items-center">
@@ -1348,10 +1496,10 @@ export default function App() {
                     soundEngine.playChime();
                     setActiveHashtag('all');
                   }}
-                  className={`min-h-[38px] cursor-pointer rounded-full px-3.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap ${
+                  className={`min-h-[38px] cursor-pointer rounded-full border px-3.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap ${
                     activeHashtag === 'all'
-                      ? 'bg-[#6F1F3B] text-[#FFF0F5]'
-                      : 'bg-white/75 text-[#6F1F3B] hover:bg-white'
+                      ? 'border-[#DDD6FE] bg-[#EDE9FE] text-[#5B21B6] shadow-sm'
+                      : 'border-transparent bg-white/75 text-[#6F1F3B] hover:bg-white'
                   }`}
                 >
                   Tất cả
@@ -1364,10 +1512,10 @@ export default function App() {
                       soundEngine.playChime();
                       setActiveHashtag(tag);
                     }}
-                    className={`min-h-[38px] cursor-pointer rounded-full px-3.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap ${
+                    className={`min-h-[38px] cursor-pointer rounded-full border px-3.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap ${
                       activeHashtag === tag
-                        ? 'bg-[#6F1F3B] text-[#FFF0F5]'
-                        : 'bg-white/75 text-[#6F1F3B] hover:bg-white'
+                        ? 'border-[#DDD6FE] bg-[#EDE9FE] text-[#5B21B6] shadow-sm'
+                        : 'border-transparent bg-white/75 text-[#6F1F3B] hover:bg-white'
                     }`}
                   >
                     #{tag}
@@ -1399,74 +1547,96 @@ export default function App() {
                       onHoverSound={() => soundEngine.playHoverTick()}
                       className="group"
                     >
-                      <article className="flex h-full flex-col items-center rounded-3xl border border-[#B65A7C]/25 bg-[#FFF0F5]/88 p-6 text-center shadow-[0_14px_38px_-14px_rgba(111,31,59,0.2)] backdrop-blur-md transition-shadow duration-200 hover:shadow-[0_22px_48px_-12px_rgba(111,31,59,0.32)]">
-                        <div className="mb-5 transition-transform duration-300 group-hover:-translate-y-1">
-                          <AvatarFrame src={char.avatar} alt={char.name} size="md" />
+                      <article className="mx-auto flex h-full w-full max-w-[305px] flex-col overflow-hidden rounded-2xl border-[1.5px] border-white/95 bg-transparent text-center shadow-[0_0_14px_rgba(255,255,255,0.75)] transition-shadow duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.95)]">
+                        <div className="mx-auto mt-4 w-[72%] max-w-[210px]">
+                          <AvatarFrame src={char.avatar} alt={char.name} size="card" />
                         </div>
 
-                        <div className="mb-1.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-xs font-semibold text-[#B65A7C]">
-                          {char.hashtags.slice(0, 3).map((tag, idx) => (
-                            <React.Fragment key={tag}>
-                              <span>#{tag.replace(/^#/, '')}</span>
-                              {idx < Math.min(char.hashtags.length, 3) - 1 && (
-                                <span aria-hidden="true" className="opacity-50">
-                                  ·
+                        <div className="flex flex-1 flex-col items-center bg-transparent px-4 pt-3.5 pb-4 text-center">
+                          <h2
+                            className="font-cute mb-2.5 text-2xl font-extrabold tracking-tight text-[#5E0B33]"
+                            style={{
+                              paintOrder: 'stroke fill',
+                              WebkitTextStroke: '3.5px #FFFFFF',
+                              textShadow:
+                                '0 0 10px rgba(255, 255, 255, 0.98), 0 2px 6px rgba(94, 11, 51, 0.25)',
+                            }}
+                          >
+                            {char.name}
+                          </h2>
+
+                          {char.hashtags.length > 0 && (
+                            <div className="mb-3 flex flex-wrap items-center justify-center gap-1.5">
+                              {char.hashtags.slice(0, 3).map((tag, idx) => (
+                                <span
+                                  key={tag}
+                                  className={`inline-flex items-center rounded-full border-[1.5px] border-white px-2.5 py-0.5 text-[11px] font-bold shadow-[0_0_8px_rgba(255,255,255,0.98),0_0_14px_rgba(255,255,255,0.75),0_2px_6px_rgba(40,60,90,0.12)] ${getPastelTagClass(
+                                    idx
+                                  )}`}
+                                >
+                                  #{tag.replace(/^#/, '')}
                                 </span>
-                              )}
-                            </React.Fragment>
-                          ))}
-                        </div>
+                              ))}
+                            </div>
+                          )}
 
-                        <h2 className="font-cute mb-2 text-xl font-bold text-[#3A071F]">
-                          {char.name}
-                        </h2>
+                          <p
+                            className={`mb-4 w-full rounded-2xl px-3.5 py-2 text-xs leading-relaxed font-semibold ${SLOGAN_BOX_CLASS}`}
+                          >
+                            <span className="line-clamp-2">“{char.slogan}”</span>
+                          </p>
 
-                        <p className="mb-5 line-clamp-2 text-sm leading-relaxed text-[#6F1F3B]/90">
-                          “{char.slogan}”
-                        </p>
-
-                        <div className="mt-auto flex w-full items-center justify-between border-t border-[#E2A6BA]/45 pt-4 text-xs font-semibold text-[#6F1F3B]">
-                          <div className="flex items-center gap-3.5">
+                          <div
+                            className="mt-auto flex w-full flex-nowrap items-center justify-center gap-3 border-t border-white/75 pt-3.5 text-xs font-bold text-[#4A0A28]"
+                            style={{
+                              textShadow:
+                                '0 0 8px rgba(255, 255, 255, 0.98), 0 0 3px rgba(255, 255, 255, 1)',
+                            }}
+                          >
                             <button
                               type="button"
                               onClick={() => void handleToggleLike(char.id)}
                               aria-label={`Thả tim cho ${char.name}`}
-                              className="inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 transition-transform hover:scale-105"
+                              className="inline-flex min-h-[34px] shrink-0 cursor-pointer items-center gap-1 transition-transform hover:scale-105"
                             >
                               <Heart
-                                className={`h-4 w-4 ${
+                                className={`h-4 w-4 drop-shadow-[0_0_4px_rgba(255,255,255,0.95)] ${
                                   isLiked
                                     ? 'fill-[#6F1F3B] text-[#6F1F3B]'
-                                    : 'text-[#B65A7C]'
+                                    : 'text-[#8C1B4A]'
                                 }`}
                               />
                               <span className="tabular-nums">{char.likesCount}</span>
                             </button>
 
-                            <span className="inline-flex items-center gap-1.5 text-[#6F1F3B]/80" title="Lượt xem">
-                              <Eye className="h-4 w-4 text-[#B65A7C]" />
+                            <span
+                              className="inline-flex shrink-0 items-center gap-1"
+                              title="Lượt xem"
+                            >
+                              <Eye className="h-4 w-4 text-[#8C1B4A] drop-shadow-[0_0_4px_rgba(255,255,255,0.95)]" />
                               <span className="tabular-nums">{char.viewsCount}</span>
                             </span>
 
                             <button
                               type="button"
                               onClick={() => void handleOpenDetail(char.id)}
-                              aria-label={`Xem ${commentCounts[char.id] ?? 0} bình luận`}
-                              title="Bình luận"
-                              className="inline-flex min-h-[36px] cursor-pointer items-center gap-1 text-[#6F1F3B]/80 transition-transform hover:scale-105 hover:text-[#3A071F]"
+                              aria-label={`Xem ${commentCounts[char.id] ?? 0} lời nhắn`}
+                              title="Lời nhắn"
+                              className="inline-flex min-h-[34px] shrink-0 cursor-pointer items-center gap-1 transition-transform hover:scale-105 hover:text-[#3A071F]"
                             >
-                              <MessageCircle className="h-4 w-4 text-[#B65A7C]" />
+                              <MessageCircle className="h-4 w-4 text-[#8C1B4A] drop-shadow-[0_0_4px_rgba(255,255,255,0.95)]" />
                               <span className="tabular-nums">{commentCounts[char.id] ?? 0}</span>
                             </button>
-                          </div>
 
-                          <button
-                            type="button"
-                            onClick={() => void handleOpenDetail(char.id)}
-                            className="min-h-[36px] cursor-pointer rounded-full bg-[#6F1F3B] px-4 py-1.5 text-xs font-bold text-[#FFF0F5] transition-colors hover:bg-[#3A071F]"
-                          >
-                            Chi tiết
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenDetail(char.id)}
+                              className="min-h-[34px] shrink-0 cursor-pointer rounded-full border border-white/95 bg-[#6F1F3B] px-3.5 py-1 text-xs font-bold text-[#FFF0F5] shadow-[0_0_10px_rgba(255,255,255,0.85)] transition-colors hover:bg-[#3A071F] whitespace-nowrap"
+                              style={{ textShadow: 'none' }}
+                            >
+                              Chi tiết
+                            </button>
+                          </div>
                         </div>
                       </article>
                     </Tilt3DCard>
@@ -1479,13 +1649,19 @@ export default function App() {
 
         {view === 'top' && (
           <motion.div
-            initial={{ opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3 }}
-            className="mx-auto max-w-6xl px-4 pb-28 sm:px-6"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.16, ease: 'easeOut' }}
+            className="mx-auto w-full max-w-6xl px-4 pb-28 sm:px-6"
           >
             <div className="mb-8 text-center">
-              <h1 className="font-cute text-2xl font-bold tracking-tight text-[#3A071F] sm:text-3xl">
+              <h1
+                className="font-artistic text-3xl font-bold tracking-wide text-[#5B1F78] sm:text-5xl"
+                style={{
+                  textShadow:
+                    '0 2px 14px rgba(255, 255, 255, 0.98), 0 0 24px rgba(255, 240, 245, 0.95), 0 2px 4px rgba(91, 31, 120, 0.2)',
+                }}
+              >
                 Top Nhân Vật Được Yêu Thích Nhất
               </h1>
             </div>
@@ -1510,18 +1686,18 @@ export default function App() {
                       onHoverSound={() => soundEngine.playHoverTick()}
                       className="group"
                     >
-                      <article className="relative flex h-full flex-col items-center rounded-3xl border border-[#B65A7C]/25 bg-[#FFF0F5]/88 p-6 text-center shadow-[0_14px_38px_-14px_rgba(111,31,59,0.2)] backdrop-blur-md transition-shadow duration-200 hover:shadow-[0_22px_48px_-12px_rgba(111,31,59,0.32)]">
+                      <article className="relative mx-auto flex h-full w-full max-w-[305px] flex-col overflow-hidden rounded-2xl border-[1.5px] border-white/95 bg-transparent text-center shadow-[0_0_14px_rgba(255,255,255,0.75)] transition-shadow duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.95)]">
                         {/* Rank Badge */}
-                        <div className="absolute top-4 left-4 z-10">
+                        <div className="absolute top-3 left-3 z-10">
                           <span
-                            className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-black shadow-sm ${
+                            className={`inline-flex items-center gap-1 rounded-full border border-white/80 px-3 py-1 text-xs font-black shadow-md ${
                               rank === 1
                                 ? 'bg-gradient-to-r from-amber-400 via-rose-300 to-amber-500 text-[#3A071F]'
                                 : rank === 2
                                 ? 'bg-gradient-to-r from-slate-200 to-slate-300 text-[#3A071F]'
                                 : rank === 3
                                 ? 'bg-gradient-to-r from-amber-600 to-amber-700 text-white'
-                                : 'bg-[#6F1F3B]/10 text-[#6F1F3B]'
+                                : 'bg-white/90 text-[#6F1F3B]'
                             }`}
                           >
                             {rank === 1 && <Crown className="h-3.5 w-3.5 fill-[#3A071F] text-[#3A071F]" />}
@@ -1529,73 +1705,258 @@ export default function App() {
                           </span>
                         </div>
 
-                        <div className="mb-5 transition-transform duration-300 group-hover:-translate-y-1">
-                          <AvatarFrame src={char.avatar} alt={char.name} size="md" />
+                        <div className="mx-auto mt-4 w-[72%] max-w-[210px]">
+                          <AvatarFrame src={char.avatar} alt={char.name} size="card" />
                         </div>
 
-                        <div className="mb-1.5 flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-xs font-semibold text-[#B65A7C]">
-                          {char.hashtags.slice(0, 3).map((tag, idx) => (
-                            <React.Fragment key={tag}>
-                              <span>#{tag.replace(/^#/, '')}</span>
-                              {idx < Math.min(char.hashtags.length, 3) - 1 && (
-                                <span aria-hidden="true" className="opacity-50">
-                                  ·
+                        <div className="flex flex-1 flex-col items-center bg-transparent px-4 pt-3.5 pb-4 text-center">
+                          <h2
+                            className="font-cute mb-2.5 text-2xl font-extrabold tracking-tight text-[#5E0B33]"
+                            style={{
+                              paintOrder: 'stroke fill',
+                              WebkitTextStroke: '3.5px #FFFFFF',
+                              textShadow:
+                                '0 0 10px rgba(255, 255, 255, 0.98), 0 2px 6px rgba(94, 11, 51, 0.25)',
+                            }}
+                          >
+                            {char.name}
+                          </h2>
+
+                          {char.hashtags.length > 0 && (
+                            <div className="mb-3 flex flex-wrap items-center justify-center gap-1.5">
+                              {char.hashtags.slice(0, 3).map((tag, idx) => (
+                                <span
+                                  key={tag}
+                                  className={`inline-flex items-center rounded-full border-[1.5px] border-white px-2.5 py-0.5 text-[11px] font-bold shadow-[0_0_8px_rgba(255,255,255,0.98),0_0_14px_rgba(255,255,255,0.75),0_2px_6px_rgba(40,60,90,0.12)] ${getPastelTagClass(
+                                    idx
+                                  )}`}
+                                >
+                                  #{tag.replace(/^#/, '')}
                                 </span>
-                              )}
-                            </React.Fragment>
-                          ))}
-                        </div>
+                              ))}
+                            </div>
+                          )}
 
-                        <h2 className="font-cute mb-2 text-xl font-bold text-[#3A071F]">
-                          {char.name}
-                        </h2>
+                          <p
+                            className={`mb-4 w-full rounded-2xl px-3.5 py-2 text-xs leading-relaxed font-semibold ${SLOGAN_BOX_CLASS}`}
+                          >
+                            <span className="line-clamp-2">“{char.slogan}”</span>
+                          </p>
 
-                        <p className="mb-5 line-clamp-2 text-sm leading-relaxed text-[#6F1F3B]/90">
-                          “{char.slogan}”
-                        </p>
-
-                        <div className="mt-auto flex w-full items-center justify-between border-t border-[#E2A6BA]/45 pt-4 text-xs font-semibold text-[#6F1F3B]">
-                          <div className="flex items-center gap-3.5">
+                          <div
+                            className="mt-auto flex w-full flex-nowrap items-center justify-center gap-3 border-t border-white/75 pt-3.5 text-xs font-bold text-[#4A0A28]"
+                            style={{
+                              textShadow:
+                                '0 0 8px rgba(255, 255, 255, 0.98), 0 0 3px rgba(255, 255, 255, 1)',
+                            }}
+                          >
                             <button
                               type="button"
                               onClick={() => void handleToggleLike(char.id)}
                               aria-label={`Thả tim cho ${char.name}`}
-                              className="inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 transition-transform hover:scale-105"
+                              className="inline-flex min-h-[34px] shrink-0 cursor-pointer items-center gap-1 transition-transform hover:scale-105"
                             >
                               <Heart
-                                className={`h-4 w-4 ${
+                                className={`h-4 w-4 drop-shadow-[0_0_4px_rgba(255,255,255,0.95)] ${
                                   isLiked
                                     ? 'fill-[#6F1F3B] text-[#6F1F3B]'
-                                    : 'text-[#B65A7C]'
+                                    : 'text-[#8C1B4A]'
                                 }`}
                               />
                               <span className="tabular-nums">{char.likesCount}</span>
                             </button>
 
-                            <span className="inline-flex items-center gap-1.5 text-[#6F1F3B]/80" title="Lượt xem">
-                              <Eye className="h-4 w-4 text-[#B65A7C]" />
+                            <span
+                              className="inline-flex shrink-0 items-center gap-1"
+                              title="Lượt xem"
+                            >
+                              <Eye className="h-4 w-4 text-[#8C1B4A] drop-shadow-[0_0_4px_rgba(255,255,255,0.95)]" />
                               <span className="tabular-nums">{char.viewsCount}</span>
                             </span>
 
                             <button
                               type="button"
                               onClick={() => void handleOpenDetail(char.id)}
-                              aria-label={`Xem ${commentCounts[char.id] ?? 0} bình luận`}
-                              title="Bình luận"
-                              className="inline-flex min-h-[36px] cursor-pointer items-center gap-1 text-[#6F1F3B]/80 transition-transform hover:scale-105 hover:text-[#3A071F]"
+                              aria-label={`Xem ${commentCounts[char.id] ?? 0} lời nhắn`}
+                              title="Lời nhắn"
+                              className="inline-flex min-h-[34px] shrink-0 cursor-pointer items-center gap-1 transition-transform hover:scale-105 hover:text-[#3A071F]"
                             >
-                              <MessageCircle className="h-4 w-4 text-[#B65A7C]" />
+                              <MessageCircle className="h-4 w-4 text-[#8C1B4A] drop-shadow-[0_0_4px_rgba(255,255,255,0.95)]" />
                               <span className="tabular-nums">{commentCounts[char.id] ?? 0}</span>
                             </button>
-                          </div>
 
-                          <button
-                            type="button"
-                            onClick={() => void handleOpenDetail(char.id)}
-                            className="min-h-[36px] cursor-pointer rounded-full bg-[#6F1F3B] px-4 py-1.5 text-xs font-bold text-[#FFF0F5] transition-colors hover:bg-[#3A071F]"
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenDetail(char.id)}
+                              className="min-h-[34px] shrink-0 cursor-pointer rounded-full border border-white/95 bg-[#6F1F3B] px-3.5 py-1 text-xs font-bold text-[#FFF0F5] shadow-[0_0_10px_rgba(255,255,255,0.85)] transition-colors hover:bg-[#3A071F] whitespace-nowrap"
+                              style={{ textShadow: 'none' }}
+                            >
+                              Chi tiết
+                            </button>
+                          </div>
+                        </div>
+                      </article>
+                    </Tilt3DCard>
+                  );
+                })}
+              </div>
+            )}
+          </motion.div>
+        )}
+
+        {view === 'liked' && (
+          <motion.div
+            initial={{ opacity: 0, y: 14 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+            className="mx-auto max-w-6xl px-4 pb-28 sm:px-6"
+          >
+            <div className="mb-8 text-center">
+              <h1
+                className="font-artistic text-3xl font-bold tracking-wide text-[#1B4B72] sm:text-5xl"
+                style={{
+                  textShadow:
+                    '0 2px 14px rgba(255, 255, 255, 0.98), 0 0 24px rgba(255, 240, 245, 0.95), 0 2px 4px rgba(27, 75, 114, 0.2)',
+                }}
+              >
+                Nhân Vật Đã Thích
+              </h1>
+            </div>
+
+            {!currentUser ? (
+              <div className="mx-auto max-w-md rounded-3xl border border-white/95 bg-[#FFF0F5]/85 p-8 text-center shadow-[0_0_14px_rgba(255,255,255,0.75)] backdrop-blur-sm">
+                <p className="mb-4 text-sm font-semibold text-[#5E1131]">
+                  Hãy đăng nhập để lưu và xem lại các nhân vật bạn đã thả tim nhé.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playChime();
+                    setAuthModalOpen(true);
+                  }}
+                  className="inline-flex min-h-[40px] cursor-pointer items-center justify-center rounded-full border border-white/95 bg-[#FFD6E6]/70 px-6 py-2 text-xs font-bold text-[#7A1840] shadow-[0_0_12px_rgba(255,255,255,0.85)] transition-all hover:bg-[#FFD6E6]"
+                >
+                  Đăng nhập
+                </button>
+              </div>
+            ) : loadingChars ? (
+              <div className="flex justify-center py-20">
+                <div className="h-10 w-10 animate-spin rounded-full border-4 border-[#B65A7C]/30 border-t-[#6F1F3B]" />
+              </div>
+            ) : likedCharacters.length === 0 ? (
+              <div className="mx-auto max-w-md rounded-3xl border border-white/95 bg-[#FFF0F5]/85 p-8 text-center shadow-[0_0_14px_rgba(255,255,255,0.75)] backdrop-blur-sm">
+                <p className="mb-4 text-sm font-semibold text-[#5E1131]">
+                  Bạn chưa thích nhân vật nào hết nè.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => handleNavigate('gallery')}
+                  className="inline-flex min-h-[40px] cursor-pointer items-center justify-center rounded-full border border-[#DDD6FE] bg-[#EDE9FE] px-6 py-2 text-xs font-bold text-[#5B21B6] shadow-sm transition-colors hover:bg-[#DDD6FE]"
+                >
+                  Xem nhân vật ngay
+                </button>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                {likedCharacters.map((char) => {
+                  const isLiked = likedIds.has(char.id);
+
+                  return (
+                    <Tilt3DCard
+                      key={char.id}
+                      onHoverSound={() => soundEngine.playHoverTick()}
+                      className="group"
+                    >
+                      <article className="mx-auto flex h-full w-full max-w-[305px] flex-col overflow-hidden rounded-2xl border-[1.5px] border-white/95 bg-transparent text-center shadow-[0_0_14px_rgba(255,255,255,0.75)] transition-shadow duration-200 hover:shadow-[0_0_20px_rgba(255,255,255,0.95)]">
+                        <div className="mx-auto mt-4 w-[72%] max-w-[210px]">
+                          <AvatarFrame src={char.avatar} alt={char.name} size="card" />
+                        </div>
+
+                        <div className="flex flex-1 flex-col items-center bg-transparent px-4 pt-3.5 pb-4 text-center">
+                          <h2
+                            className="font-cute mb-2.5 text-2xl font-extrabold tracking-tight text-[#5E0B33]"
+                            style={{
+                              paintOrder: 'stroke fill',
+                              WebkitTextStroke: '3.5px #FFFFFF',
+                              textShadow:
+                                '0 0 10px rgba(255, 255, 255, 0.98), 0 2px 6px rgba(94, 11, 51, 0.25)',
+                            }}
                           >
-                            Chi tiết
-                          </button>
+                            {char.name}
+                          </h2>
+
+                          {char.hashtags.length > 0 && (
+                            <div className="mb-3 flex flex-wrap items-center justify-center gap-1.5">
+                              {char.hashtags.slice(0, 3).map((tag, idx) => (
+                                <span
+                                  key={tag}
+                                  className={`inline-flex items-center rounded-full border-[1.5px] border-white px-2.5 py-0.5 text-[11px] font-bold shadow-[0_0_8px_rgba(255,255,255,0.98),0_0_14px_rgba(255,255,255,0.75),0_2px_6px_rgba(40,60,90,0.12)] ${getPastelTagClass(
+                                    idx
+                                  )}`}
+                                >
+                                  #{tag.replace(/^#/, '')}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+
+                          <p
+                            className={`mb-4 w-full rounded-2xl px-3.5 py-2 text-xs leading-relaxed font-semibold ${SLOGAN_BOX_CLASS}`}
+                          >
+                            <span className="line-clamp-2">“{char.slogan}”</span>
+                          </p>
+
+                          <div
+                            className="mt-auto flex w-full flex-nowrap items-center justify-center gap-3 border-t border-white/75 pt-3.5 text-xs font-bold text-[#4A0A28]"
+                            style={{
+                              textShadow:
+                                '0 0 8px rgba(255, 255, 255, 0.98), 0 0 3px rgba(255, 255, 255, 1)',
+                            }}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => void handleToggleLike(char.id)}
+                              aria-label={`Bỏ thả tim cho ${char.name}`}
+                              className="inline-flex min-h-[34px] shrink-0 cursor-pointer items-center gap-1 transition-transform hover:scale-105"
+                            >
+                              <Heart
+                                className={`h-4 w-4 drop-shadow-[0_0_4px_rgba(255,255,255,0.95)] ${
+                                  isLiked
+                                    ? 'fill-[#6F1F3B] text-[#6F1F3B]'
+                                    : 'text-[#8C1B4A]'
+                                }`}
+                              />
+                              <span className="tabular-nums">{char.likesCount}</span>
+                            </button>
+
+                            <span
+                              className="inline-flex shrink-0 items-center gap-1"
+                              title="Lượt xem"
+                            >
+                              <Eye className="h-4 w-4 text-[#8C1B4A] drop-shadow-[0_0_4px_rgba(255,255,255,0.95)]" />
+                              <span className="tabular-nums">{char.viewsCount}</span>
+                            </span>
+
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenDetail(char.id)}
+                              aria-label={`Xem ${commentCounts[char.id] ?? 0} lời nhắn`}
+                              title="Lời nhắn"
+                              className="inline-flex min-h-[34px] shrink-0 cursor-pointer items-center gap-1 transition-transform hover:scale-105 hover:text-[#3A071F]"
+                            >
+                              <MessageCircle className="h-4 w-4 text-[#8C1B4A] drop-shadow-[0_0_4px_rgba(255,255,255,0.95)]" />
+                              <span className="tabular-nums">{commentCounts[char.id] ?? 0}</span>
+                            </button>
+
+                            <button
+                              type="button"
+                              onClick={() => void handleOpenDetail(char.id)}
+                              className="min-h-[34px] shrink-0 cursor-pointer rounded-full border border-white/95 bg-[#6F1F3B] px-3.5 py-1 text-xs font-bold text-[#FFF0F5] shadow-[0_0_10px_rgba(255,255,255,0.85)] transition-colors hover:bg-[#3A071F] whitespace-nowrap"
+                              style={{ textShadow: 'none' }}
+                            >
+                              Chi tiết
+                            </button>
+                          </div>
                         </div>
                       </article>
                     </Tilt3DCard>
@@ -1617,6 +1978,17 @@ export default function App() {
             onAddComment={handleAddComment}
             onUpdateComment={handleUpdateComment}
             onDeleteComment={handleDeleteComment}
+            onRequestAuth={() => setAuthModalOpen(true)}
+            onPlayHoverSound={() => soundEngine.playHoverTick()}
+          />
+        )}
+
+        {view === 'chat' && (
+          <ChatPage
+            chatMessages={chatMessages}
+            currentUser={currentUser}
+            onSendChatMessage={handleSendChatMessage}
+            onDeleteChatMessage={handleDeleteChatMessage}
             onRequestAuth={() => setAuthModalOpen(true)}
             onPlayHoverSound={() => soundEngine.playHoverTick()}
           />

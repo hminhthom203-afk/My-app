@@ -39,8 +39,8 @@ service cloud.firestore {
       ])
       && data.keys().hasOnly([
         'name', 'avatar', 'hashtags', 'slogan', 'story',
-        'link', 'linkLabel', 'likesCount', 'viewsCount',
-        'createdAt', 'updatedAt'
+        'link', 'linkLabel', 'passcode', 'passcodeHint',
+        'likesCount', 'viewsCount', 'createdAt', 'updatedAt'
       ])
       && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
       && data.avatar is string && data.avatar.size() >= 1 && data.avatar.size() <= 200000
@@ -50,6 +50,8 @@ service cloud.firestore {
       && data.story is string && data.story.size() >= 1 && data.story.size() <= 5000
       && data.link is string && data.link.size() <= 500
       && data.linkLabel is string && data.linkLabel.size() <= 80
+      && (!('passcode' in data) || (data.passcode is string && data.passcode.size() <= 80))
+      && (!('passcodeHint' in data) || (data.passcodeHint is string && data.passcodeHint.size() <= 200))
       && data.likesCount is int && data.likesCount >= 0
       && data.viewsCount is int && data.viewsCount >= 0
       && data.createdAt is timestamp
@@ -114,7 +116,7 @@ service cloud.firestore {
         'type', 'characterId', 'characterName', 'actorUid', 'actorName',
         'message', 'recipientEmail', 'emailStatus', 'read', 'createdAt'
       ])
-      && data.type in ['like', 'comment']
+      && data.type in ['like', 'comment', 'chat']
       && isValidId(data.characterId)
       && data.characterName is string && data.characterName.size() >= 1 && data.characterName.size() <= 80
       && data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128
@@ -123,6 +125,22 @@ service cloud.firestore {
       && data.recipientEmail is string && data.recipientEmail == 'hminhthom203@gmail.com'
       && data.emailStatus in ['sent', 'queued', 'not_configured']
       && data.read is bool
+      && data.createdAt is timestamp;
+    }
+
+    function isValidChatMessage(data) {
+      return data.keys().hasAll([
+        'authorUid', 'authorName', 'characterId', 'characterName', 'tag', 'content', 'createdAt'
+      ])
+      && data.keys().hasOnly([
+        'authorUid', 'authorName', 'characterId', 'characterName', 'tag', 'content', 'createdAt'
+      ])
+      && data.authorUid is string && data.authorUid.size() >= 1 && data.authorUid.size() <= 128
+      && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 80
+      && data.characterId is string && data.characterId.size() <= 128
+      && data.characterName is string && data.characterName.size() <= 80
+      && data.tag is string && data.tag.size() <= 50
+      && data.content is string && data.content.size() >= 1 && data.content.size() <= 500
       && data.createdAt is timestamp;
     }
 
@@ -142,6 +160,22 @@ service cloud.firestore {
       allow get: if docId == 'connection';
     }
 
+    // Community Chats / Feedback
+    match /community_chats/{chatId} {
+      allow get: if isValidId(chatId);
+      allow list: if true;
+
+      allow create: if isVerifiedSignedIn()
+        && isValidId(chatId)
+        && isValidChatMessage(incoming())
+        && incoming().authorUid == request.auth.uid
+        && incoming().createdAt == request.time;
+
+      allow delete: if isVerifiedSignedIn()
+        && isValidId(chatId)
+        && (isAdmin() || existing().authorUid == request.auth.uid);
+    }
+
     // Characters
     match /characters/{charId} {
       allow get: if isValidId(charId);
@@ -159,7 +193,7 @@ service cloud.firestore {
         (
           isAdmin()
           && incoming().diff(existing()).affectedKeys().hasOnly([
-            'name', 'avatar', 'hashtags', 'slogan', 'story', 'link', 'linkLabel', 'updatedAt'
+            'name', 'avatar', 'hashtags', 'slogan', 'story', 'link', 'linkLabel', 'passcode', 'passcodeHint', 'updatedAt'
           ])
           && incoming().createdAt == existing().createdAt
           && incoming().likesCount == existing().likesCount

@@ -38,19 +38,23 @@ export const MusicPage: React.FC<MusicPageProps> = ({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-      className="mx-auto w-full max-w-4xl px-4 pt-4 pb-28 sm:px-6"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.16, ease: 'easeOut' }}
+      className="mx-auto w-full max-w-4xl px-4 pb-28 sm:px-6"
     >
       <div className="mb-8 text-center">
         <h1
-          className="font-cute mb-2 bg-gradient-to-r from-[#6F1F3B] via-[#B65A7C] to-[#8E2B4E] bg-clip-text text-3xl font-bold text-transparent sm:text-4xl"
-          style={{ textWrap: 'balance' }}
+          className="font-artistic mb-2 text-4xl font-bold tracking-wide text-[#9A3B12] sm:text-6xl"
+          style={{
+            textWrap: 'balance',
+            textShadow:
+              '0 2px 14px rgba(255, 255, 255, 0.98), 0 0 24px rgba(255, 240, 245, 0.95), 0 2px 4px rgba(154, 59, 18, 0.2)',
+          }}
         >
           Hộp Nhạc
         </h1>
-        <p className="mx-auto max-w-lg text-sm font-medium text-[#6F1F3B]">
+        <p className="inline-block rounded-full border border-[#B65A7C]/25 bg-white/80 px-5 py-1 text-xs font-semibold text-[#5E1131] shadow-sm backdrop-blur-sm sm:text-sm">
           Hộp Nhạc Của Kẹo
         </p>
       </div>

@@ -14,6 +14,7 @@ import {
   Link2,
   UserPlus,
   ArrowLeft,
+  Lock,
 } from 'lucide-react';
 import { AdminNotification, Character, MusicTrack } from '../types';
 import {
@@ -44,6 +45,8 @@ interface CharacterFormInput {
   story: string;
   link: string;
   linkLabel: string;
+  passcode?: string;
+  passcodeHint?: string;
 }
 
 interface TrackFormInput {
@@ -103,6 +106,8 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const [charSlogan, setCharSlogan] = useState('');
   const [charStory, setCharStory] = useState('');
   const [charLink, setCharLink] = useState('');
+  const [charPasscode, setCharPasscode] = useState('');
+  const [charPasscodeHint, setCharPasscodeHint] = useState('');
   const [readingAvatar, setReadingAvatar] = useState(false);
   const [charError, setCharError] = useState<string | null>(null);
 
@@ -129,6 +134,8 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     setCharSlogan('');
     setCharStory('');
     setCharLink('');
+    setCharPasscode('');
+    setCharPasscodeHint('');
     setCharError(null);
   };
 
@@ -152,6 +159,8 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     setCharSlogan(c.slogan);
     setCharStory(c.story);
     setCharLink(c.link);
+    setCharPasscode(c.passcode || '');
+    setCharPasscodeHint(c.passcodeHint || '');
     setCharError(null);
     setTab('edit_char');
     window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -206,6 +215,8 @@ export const AdminPage: React.FC<AdminPageProps> = ({
           'Câu chuyện đang được viết tiếp tại khu vườn Ăn Kẹo Hong.',
         link: charLink.trim().slice(0, 500),
         linkLabel: 'Mua Kẹo Ở Đây',
+        passcode: charPasscode.trim().slice(0, 80),
+        passcodeHint: charPasscodeHint.trim().slice(0, 200),
       });
       resetCharForm();
       setTab('edit_char');
@@ -508,6 +519,39 @@ export const AdminPage: React.FC<AdminPageProps> = ({
           />
         </div>
 
+        <div className="space-y-3 rounded-2xl border border-[#DDD6FE] bg-[#EDE9FE]/55 p-4">
+          <div className="flex items-center gap-2 text-xs font-bold text-[#5B21B6]">
+            <Lock className="h-3.5 w-3.5" />
+            <span>Khoá Link Bằng Pass (tuỳ chọn)</span>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-[#5B21B6]">
+              Mật khẩu mở link (để trống nếu không đặt pass)
+            </label>
+            <input
+              type="text"
+              maxLength={80}
+              value={charPasscode}
+              onChange={(e) => setCharPasscode(e.target.value)}
+              placeholder="Ví dụ: keo2026..."
+              className="min-h-[42px] w-full rounded-xl border border-[#DDD6FE] bg-white px-3 py-2 text-sm text-[#4C1D95] focus:border-[#A78BFA] focus:outline-none"
+            />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-semibold text-[#5B21B6]">
+              Gợi ý pass (hiển thị phía trên ô nhập pass cho người xem)
+            </label>
+            <input
+              type="text"
+              maxLength={200}
+              value={charPasscodeHint}
+              onChange={(e) => setCharPasscodeHint(e.target.value)}
+              placeholder="Ví dụ: Ngày sinh của bé kẹo..."
+              className="min-h-[42px] w-full rounded-xl border border-[#DDD6FE] bg-white px-3 py-2 text-sm text-[#4C1D95] focus:border-[#A78BFA] focus:outline-none"
+            />
+          </div>
+        </div>
+
         <div className="flex flex-wrap gap-2 pt-2">
           <button
             type="submit"
@@ -535,10 +579,10 @@ export const AdminPage: React.FC<AdminPageProps> = ({
 
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, ease: [0.16, 1, 0.3, 1] }}
-      className="mx-auto w-full max-w-5xl px-4 pt-4 pb-28 sm:px-6"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.16, ease: 'easeOut' }}
+      className="mx-auto w-full max-w-5xl px-4 pb-28 sm:px-6"
     >
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
@@ -564,6 +608,24 @@ export const AdminPage: React.FC<AdminPageProps> = ({
 
           {/* 4 Main Admin Navigation Buttons */}
           <div className="flex flex-wrap items-center gap-1 rounded-2xl border border-[#B65A7C]/25 bg-[#FFF0F5]/80 p-1">
+            <button
+              type="button"
+              onClick={() => {
+                setTab('notifications');
+                void onMarkAllNotificationsRead();
+              }}
+              className={`inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap ${
+                tab === 'notifications'
+                  ? 'bg-[#6F1F3B] text-[#FFF0F5]'
+                  : 'text-[#6F1F3B] hover:bg-[#E2A6BA]/30'
+              }`}
+            >
+              <Bell className="h-3.5 w-3.5" />
+              <span>
+                {unreadCount > 0 ? `Quản Trị (${unreadCount} mới)` : 'Quản Trị'}
+              </span>
+            </button>
+
             <button
               type="button"
               onClick={handleOpenAddChar}
@@ -602,24 +664,6 @@ export const AdminPage: React.FC<AdminPageProps> = ({
               <Music className="h-3.5 w-3.5" />
               <span>Âm nhạc ({tracks.length})</span>
             </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                setTab('notifications');
-                void onMarkAllNotificationsRead();
-              }}
-              className={`inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl px-3.5 py-1.5 text-xs font-semibold transition-colors whitespace-nowrap ${
-                tab === 'notifications'
-                  ? 'bg-[#6F1F3B] text-[#FFF0F5]'
-                  : 'text-[#6F1F3B] hover:bg-[#E2A6BA]/30'
-              }`}
-            >
-              <Bell className="h-3.5 w-3.5" />
-              <span>
-                {unreadCount > 0 ? `Thông báo (${unreadCount} mới)` : 'Thông báo'}
-              </span>
-            </button>
           </div>
         </div>
       </div>
@@ -650,8 +694,16 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                 <div className="flex min-w-0 items-center gap-3.5">
                   <AvatarFrame src={c.avatar} alt={c.name} size="sm" />
                   <div className="min-w-0">
-                    <h3 className="font-cute truncate text-base font-bold text-[#3A071F]">
-                      {c.name}
+                    <h3 className="font-cute flex items-center gap-1.5 truncate text-base font-bold text-[#3A071F]">
+                      <span className="truncate">{c.name}</span>
+                      {Boolean(c.passcode?.trim()) && (
+                        <span
+                          title="Nhân vật có mật khẩu mở link"
+                          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full border border-[#DDD6FE] bg-[#EDE9FE] text-[#5B21B6]"
+                        >
+                          <Lock className="h-3 w-3" />
+                        </span>
+                      )}
                     </h3>
                     <p className="truncate text-xs text-[#6F1F3B]/80">{c.slogan}</p>
                     <p className="mt-0.5 truncate text-[11px] font-semibold text-[#B65A7C] tabular-nums">
@@ -906,7 +958,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         <div className="space-y-3 rounded-3xl border border-[#B65A7C]/25 bg-[#FFF0F5]/90 p-6 shadow-sm">
           <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
             <h2 className="font-cute text-lg font-bold text-[#3A071F]">
-              Thông báo tim &amp; bình luận gửi về hminhthom203@gmail.com
+              Hộp thư thông báo
             </h2>
             {notifications.length > 0 && (
               <button

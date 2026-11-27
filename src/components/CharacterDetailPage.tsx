@@ -3,7 +3,6 @@ import { motion } from 'motion/react';
 import {
   ArrowLeft,
   Heart,
-  Copy,
   MessageCircle,
   Send,
   Trash2,
@@ -11,12 +10,14 @@ import {
   Check,
   X,
   BookOpen,
-  Eye,
+  ShoppingBag,
+  ChevronDown,
 } from 'lucide-react';
 import { Character, CharacterComment, UserProfile } from '../types';
 import { AvatarFrame } from './AvatarFrame';
 import { Tilt3DCard } from './Tilt3DCard';
 import { ConfirmModal } from './ConfirmModal';
+import { getPastelTagClass, SLOGAN_BOX_CLASS } from '../utils/pastelTags';
 
 interface CharacterDetailPageProps {
   character: Character;
@@ -52,22 +53,12 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
   const [authNotice, setAuthNotice] = useState<string | null>(null);
   const [pendingDeleteCommentId, setPendingDeleteCommentId] = useState<string | null>(null);
   const [deletingComment, setDeletingComment] = useState(false);
-  const [copiedLink, setCopiedLink] = useState(false);
-
-  const handleLikeClick = () => {
-    if (!currentUser || !currentUser.emailVerified) {
-      setAuthNotice('Bạn cần đăng nhập tài khoản đã xác minh để thả tim cho nhân vật.');
-      onRequestAuth();
-      return;
-    }
-    setAuthNotice(null);
-    onToggleLike(character.id);
-  };
+  const [visibleCount, setVisibleCount] = useState(10);
 
   const handleSubmitComment = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !currentUser.emailVerified) {
-      setAuthNotice('Bạn cần đăng nhập tài khoản đã xác minh để gửi bình luận.');
+      setAuthNotice('Bạn cần đăng nhập tài khoản đã xác minh để gửi lời nhắn.');
       onRequestAuth();
       return;
     }
@@ -111,111 +102,78 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
         ? `https://${character.link}`
         : '';
 
-  const handleCopyLink = async () => {
-    if (!safeHref) return;
-    try {
-      await navigator.clipboard.writeText(safeHref);
-    } catch {
-      const textarea = document.createElement('textarea');
-      textarea.value = safeHref;
-      textarea.style.position = 'fixed';
-      textarea.style.opacity = '0';
-      document.body.appendChild(textarea);
-      textarea.select();
-      try {
-        document.execCommand('copy');
-      } finally {
-        document.body.removeChild(textarea);
-      }
-    }
-    setCopiedLink(true);
-    window.setTimeout(() => setCopiedLink(false), 2000);
-  };
-
   return (
     <motion.div
       key={character.id}
-      initial={{ opacity: 0, y: 18 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.45, ease: [0.16, 1, 0.3, 1] }}
-      className="mx-auto w-full max-w-4xl px-4 pt-4 pb-24 sm:px-6"
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: 0.16, ease: 'easeOut' }}
+      className="mx-auto w-full max-w-4xl px-4 pb-24 sm:px-6"
     >
       <div className="mb-6 flex items-center justify-between">
         <button
           type="button"
           onClick={onBack}
           onPointerEnter={onPlayHoverSound}
-          className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-full border border-[#B65A7C]/30 bg-[#FFF0F5]/85 px-4 py-2 text-sm font-semibold text-[#6F1F3B] shadow-sm transition-all duration-200 hover:-translate-x-0.5 hover:bg-white focus-visible:outline-2 focus-visible:outline-[#6F1F3B]"
+          className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-full border border-white bg-white/10 px-5 py-2 text-sm font-bold text-[#5E1131] shadow-[0_0_12px_rgba(255,255,255,0.85)] backdrop-blur-sm transition-all duration-200 hover:-translate-x-0.5 hover:border-white hover:bg-white/20 hover:shadow-[0_0_16px_rgba(255,255,255,1)] focus-visible:outline-2 focus-visible:outline-white"
         >
           <ArrowLeft className="h-4 w-4" />
           <span className="whitespace-nowrap">Quay lại danh sách</span>
         </button>
       </div>
 
-      {/* Main Dedicated Profile Card */}
-      <div className="overflow-hidden rounded-3xl border border-[#B65A7C]/25 bg-[#FFF0F5]/88 p-6 shadow-[0_20px_50px_-18px_rgba(111,31,59,0.22)] backdrop-blur-md sm:p-10">
+      {/* Main Dedicated Profile Card - reduced opacity to 5% background */}
+      <div className="overflow-hidden rounded-3xl border border-white/80 bg-gradient-to-br from-[#F8F7FF]/5 via-[#F3E8FF]/5 to-[#EFF6FF]/5 p-6 shadow-[0_12px_36px_-18px_rgba(124,58,237,0.06)] backdrop-blur-md sm:p-10">
         <div className="flex flex-col items-center gap-8 md:flex-row md:items-start">
-          {/* Left: Framed Avatar + Stats + Heart Action */}
+          {/* Left: Framed Avatar Only */}
           <div className="flex shrink-0 flex-col items-center">
             <Tilt3DCard maxTilt={7} onHoverSound={onPlayHoverSound}>
               <div className="animate-float-3d group">
                 <AvatarFrame src={character.avatar} alt={character.name} size="lg" />
               </div>
             </Tilt3DCard>
-
-            <div className="mt-6 flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleLikeClick}
-                className={`inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-full px-5 py-2 text-sm font-bold transition-all duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#6F1F3B] ${
-                  isLiked
-                    ? 'bg-[#6F1F3B] text-[#FFF0F5] shadow-[0_8px_20px_-6px_rgba(111,31,59,0.6)]'
-                    : 'border border-[#B65A7C]/35 bg-white/80 text-[#6F1F3B] hover:bg-[#E2A6BA]/30'
-                }`}
-              >
-                <Heart className={`h-4 w-4 ${isLiked ? 'fill-[#FFF0F5] text-[#FFF0F5]' : ''}`} />
-                <span className="tabular-nums">{character.likesCount} Tim</span>
-              </button>
-
-              <div className="inline-flex min-h-[44px] items-center gap-1.5 rounded-full border border-[#E2A6BA]/70 bg-white/70 px-4 py-2 text-sm font-semibold text-[#6F1F3B]">
-                <Eye className="h-4 w-4 text-[#B65A7C]" />
-                <span className="tabular-nums">{character.viewsCount}</span>
-              </div>
-            </div>
           </div>
 
           {/* Right: Name, Hashtags, Slogan, Story, Link */}
           <div className="min-w-0 flex-1 text-center md:text-left">
-            <div className="mb-2 flex flex-wrap items-center justify-center gap-x-2 gap-y-1 text-xs font-semibold text-[#B65A7C] md:justify-start">
-              {character.hashtags.map((tag, index) => (
-                <React.Fragment key={tag}>
-                  <span>#{tag.replace(/^#/, '')}</span>
-                  {index < character.hashtags.length - 1 && (
-                    <span aria-hidden="true" className="opacity-50">
-                      ·
-                    </span>
-                  )}
-                </React.Fragment>
-              ))}
-            </div>
-
             <h1
-              className="font-cute mb-3 text-3xl font-bold tracking-tight text-[#3A071F] sm:text-4xl"
-              style={{ textWrap: 'balance' }}
+              className="font-cute mb-3 text-3xl font-extrabold tracking-tight text-[#D8B4FE] sm:text-4xl"
+              style={{
+                textWrap: 'balance',
+                paintOrder: 'stroke fill',
+                WebkitTextStroke: '3.5px #7C3AED',
+                textShadow:
+                  '0 0 12px rgba(124, 58, 237, 0.4), 0 2px 6px rgba(109, 40, 217, 0.25)',
+              }}
             >
               {character.name}
             </h1>
 
-            <p className="mb-6 rounded-2xl border border-[#E2A6BA]/50 bg-white/60 px-5 py-3.5 text-base font-medium text-[#6F1F3B] italic">
+            {character.hashtags.length > 0 && (
+              <div className="mb-4 flex flex-wrap items-center justify-center gap-2 md:justify-start">
+                {character.hashtags.map((tag, index) => (
+                  <span
+                    key={tag}
+                    className={`inline-flex items-center rounded-full border-[1.5px] border-white px-3 py-0.5 text-xs font-bold shadow-[0_0_8px_rgba(255,255,255,0.98),0_0_14px_rgba(255,255,255,0.75),0_2px_6px_rgba(40,60,90,0.12)] ${getPastelTagClass(
+                      index
+                    )}`}
+                  >
+                    #{tag.replace(/^#/, '')}
+                  </span>
+                ))}
+              </div>
+            )}
+
+            <p className={`mb-6 rounded-2xl px-5 py-3.5 text-base font-semibold italic ${SLOGAN_BOX_CLASS}`}>
               “{character.slogan}”
             </p>
 
             <div className="mb-6">
-              <h2 className="font-cute mb-2.5 flex items-center justify-center gap-2 text-lg font-bold text-[#3A071F] md:justify-start">
-                <BookOpen className="h-4 w-4 text-[#B65A7C]" />
-                <span>Cốt truyện</span>
+              <h2 className="font-cute mb-2.5 flex items-center justify-center gap-2 text-lg font-bold text-[#E9D5FF] md:justify-start">
+                <BookOpen className="h-4 w-4 text-[#C4B5FD]" />
+                <span style={{ textShadow: '0 1px 4px rgba(0,0,0,0.3)' }}>Cốt truyện</span>
               </h2>
-              <div className="space-y-3 text-left text-sm leading-relaxed text-[#3A071F]/90 sm:text-base">
+              <div className="space-y-3 text-left text-sm leading-relaxed text-white sm:text-base" style={{ textShadow: '0 1px 6px rgba(0,0,0,0.4)' }}>
                 {character.story.split('\n').map((para, idx) =>
                   para.trim() ? <p key={idx}>{para}</p> : null
                 )}
@@ -224,50 +182,31 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
 
             {safeHref && (
               <div className="flex flex-wrap items-center justify-center gap-2.5 pt-2 md:justify-start">
-                <div className="inline-flex min-h-[46px] items-center gap-2 rounded-full bg-gradient-to-r from-[#6F1F3B] to-[#3A071F] px-5 py-2 text-sm font-semibold text-[#FFF0F5] shadow-[0_10px_24px_-8px_rgba(111,31,59,0.55)]">
-                  <span>Mua Kẹo</span>
-                  <a
-                    href={safeHref}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    onPointerEnter={onPlayHoverSound}
-                    className="rounded-md bg-[#E2A6BA]/30 px-2.5 py-0.5 font-extrabold text-[#FFF0F5] underline decoration-[#FFF0F5] decoration-2 underline-offset-4 transition-colors hover:bg-[#FFF0F5] hover:text-[#3A071F] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#FFF0F5]"
-                  >
-                    Ở Đây
-                  </a>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={handleCopyLink}
+                <a
+                  href={safeHref}
+                  target="_blank"
+                  rel="noopener noreferrer"
                   onPointerEnter={onPlayHoverSound}
-                  aria-label="Copy link mua kẹo"
-                  className="inline-flex min-h-[46px] cursor-pointer items-center gap-1.5 rounded-full border border-[#B65A7C]/35 bg-white/85 px-4 py-2 text-xs font-bold text-[#6F1F3B] shadow-sm transition-colors hover:bg-[#E2A6BA]/30 hover:text-[#3A071F]"
+                  className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-full border border-white/95 bg-[#FED7AA]/90 px-6 py-2.5 text-sm font-bold text-[#8A2C0D] shadow-[0_0_12px_rgba(255,255,255,0.9)] transition-all hover:scale-105 hover:bg-[#FDBA74]"
                 >
-                  {copiedLink ? (
-                    <>
-                      <Check className="h-4 w-4 text-[#6F1F3B]" />
-                      <span>Đã copy link</span>
-                    </>
-                  ) : (
-                    <>
-                      <Copy className="h-4 w-4 text-[#B65A7C]" />
-                      <span>Copy link</span>
-                    </>
-                  )}
-                </button>
+                  <ShoppingBag className="h-4 w-4" />
+                  <span className="underline decoration-current underline-offset-4">Mua Kẹo Tại Đây</span>
+                </a>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* Comments Section */}
-      <section className="mt-8 rounded-3xl border border-[#B65A7C]/20 bg-[#FFF0F5]/88 p-6 shadow-sm backdrop-blur-md sm:p-8">
+      {/* Messages / Comments Section - 0% background transparency */}
+      <section className="mt-8 rounded-3xl border border-white/60 bg-transparent p-6 shadow-none sm:p-8">
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-          <h2 className="font-cute flex items-center gap-2 text-xl font-bold text-[#3A071F]">
-            <MessageCircle className="h-5 w-5 text-[#B65A7C]" />
-            <span>Bình luận ({comments.length})</span>
+          <h2 className="font-cute inline-flex flex-wrap items-center gap-2 rounded-2xl border border-[#FDA4AF] bg-[#FFE4E6]/85 px-4 py-2 text-lg font-bold text-[#9F1239] shadow-[0_0_10px_rgba(255,255,255,0.85)] sm:text-xl">
+            <MessageCircle className="h-5 w-5 text-[#E11D48]" />
+            <span>Gửi lời nhắn đến {character.name}</span>
+            <span className="text-xs font-semibold text-[#9F1239]/80 tabular-nums">
+              ({comments.length})
+            </span>
           </h2>
           {!currentUser ? (
             <button
@@ -275,7 +214,7 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
               onClick={onRequestAuth}
               className="cursor-pointer text-xs font-semibold text-[#6F1F3B] underline decoration-[#B65A7C] underline-offset-4 hover:text-[#3A071F]"
             >
-              Đăng nhập để bình luận &amp; thả tim
+              Đăng nhập để gửi lời nhắn
             </button>
           ) : !currentUser.emailVerified ? (
             <button
@@ -291,7 +230,7 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
         {currentUser && !currentUser.emailVerified && (
           <div className="mb-4 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#6F1F3B]/30 bg-[#E2A6BA]/35 px-4 py-2.5 text-xs font-semibold text-[#3A071F]">
             <span>
-              Tài khoản {currentUser.email} chưa xác minh Gmail nên chưa thể thả tim hoặc bình luận.
+              Tài khoản {currentUser.email} chưa xác minh Gmail nên chưa thể gửi lời nhắn.
             </span>
             <button
               type="button"
@@ -317,129 +256,169 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
             maxLength={500}
             placeholder={
               currentUser
-                ? `Viết cảm nhận của ${currentUser.name} về ${character.name}...`
-                : 'Đăng nhập để chia sẻ cảm nghĩ của bạn...'
+                ? `Viết lời nhắn của ${currentUser.name} gửi đến ${character.name}...`
+                : 'Đăng nhập để gửi lời nhắn...'
             }
-            className="min-h-[44px] flex-1 rounded-2xl border border-[#B65A7C]/30 bg-white/85 px-4 py-2.5 text-sm text-[#3A071F] placeholder-[#B65A7C]/70 focus:border-[#6F1F3B] focus:outline-none"
+            className="min-h-[44px] flex-1 rounded-2xl border border-white/80 bg-white/60 px-4 py-2.5 text-sm text-[#3A071F] placeholder-[#B65A7C]/70 shadow-sm backdrop-blur-sm focus:border-[#FDA4AF] focus:bg-white/90 focus:outline-none"
           />
           <button
             type="submit"
             disabled={submitting}
-            className="inline-flex min-h-[44px] shrink-0 cursor-pointer items-center justify-center gap-2 rounded-2xl bg-[#6F1F3B] px-5 py-2.5 text-sm font-semibold text-[#FFF0F5] transition-colors hover:bg-[#3A071F] disabled:opacity-60"
+            className="inline-flex min-h-[44px] shrink-0 cursor-pointer items-center justify-center gap-2 rounded-2xl border border-[#FDA4AF] bg-[#FFE4E6] px-6 py-2.5 text-sm font-bold text-[#9F1239] shadow-[0_0_10px_rgba(255,255,255,0.8)] transition-all hover:scale-105 hover:bg-[#FECDD3] disabled:opacity-60"
           >
-            <Send className="h-4 w-4" />
-            <span className="whitespace-nowrap">Gửi bình luận</span>
+            <Send className="h-4 w-4 text-[#E11D48]" />
+            <span className="whitespace-nowrap">Gửi</span>
           </button>
         </form>
 
+        {/* Divider ngăn cách mục gửi lời nhắn với danh sách lời nhắn đã gửi */}
+        <div
+          aria-hidden="true"
+          className="my-7 flex items-center justify-center gap-3 select-none"
+        >
+          <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/80 to-transparent" />
+          <span
+            className="text-sm font-bold tracking-[0.35em] text-white sm:text-base"
+            style={{
+              paintOrder: 'stroke fill',
+              WebkitTextStroke: '1.2px #FDA4AF',
+              textShadow:
+                '0 0 8px rgba(255, 255, 255, 0.98), 0 0 14px rgba(255, 255, 255, 0.85)',
+            }}
+          >
+            ✦ · ✦ · ✦
+          </span>
+          <div className="h-px flex-1 bg-gradient-to-r from-transparent via-white/80 to-transparent" />
+        </div>
+
         {comments.length === 0 ? (
-          <p className="py-6 text-center text-sm text-[#6F1F3B]/75">
-            Chưa có bình luận nào. Hãy là người đầu tiên gửi lời nhắn cho {character.name}!
+          <p className="py-6 text-center text-sm font-medium text-[#9F1239]/85">
+            Chưa có lời nhắn nào. Hãy là người đầu tiên gửi lời nhắn đến {character.name}!
           </p>
         ) : (
-          <ul className="space-y-3">
-            {comments.map((cmt) => {
-              const isOwner = currentUser?.uid === cmt.authorUid;
-              const canDelete = Boolean(
-                currentUser && (currentUser.role === 'admin' || isOwner)
-              );
-              const isEditing = editingId === cmt.id;
+          <>
+            <ul className="space-y-3">
+              {comments.slice(0, visibleCount).map((cmt) => {
+                const isOwner = currentUser?.uid === cmt.authorUid;
+                const canDelete = Boolean(
+                  currentUser && (currentUser.role === 'admin' || isOwner)
+                );
+                const isEditing = editingId === cmt.id;
 
-              return (
-                <li
-                  key={cmt.id}
-                  className="flex flex-col gap-2 rounded-2xl border border-[#E2A6BA]/40 bg-white/75 px-4 py-3"
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="mb-1 flex flex-wrap items-center gap-2 text-xs">
-                        <span className="font-bold text-[#3A071F]">{cmt.authorName}</span>
-                        <span aria-hidden="true" className="text-[#B65A7C]">
-                          ·
-                        </span>
-                        <span className="text-[#6F1F3B]/70 tabular-nums">
-                          {new Date(cmt.createdAt).toLocaleDateString('vi-VN')}
-                        </span>
-                        {cmt.updatedAt && cmt.updatedAt !== cmt.createdAt && (
-                          <span className="text-[11px] text-[#B65A7C]">(đã chỉnh sửa)</span>
+                return (
+                  <li
+                    key={cmt.id}
+                    className="flex flex-col gap-2 rounded-2xl border border-white/80 bg-white/30 px-4 py-3 shadow-[0_0_8px_rgba(255,255,255,0.5)] backdrop-blur-sm"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="mb-1 flex flex-wrap items-center gap-2 text-xs">
+                          <span className="font-bold text-[#3A071F]">{cmt.authorName}</span>
+                          <span aria-hidden="true" className="text-[#B65A7C]">
+                            ·
+                          </span>
+                          <span className="text-[#6F1F3B]/70 tabular-nums">
+                            {new Date(cmt.createdAt).toLocaleDateString('vi-VN')}
+                          </span>
+                          {cmt.updatedAt && cmt.updatedAt !== cmt.createdAt && (
+                            <span className="text-[11px] text-[#B65A7C]">(đã chỉnh sửa)</span>
+                          )}
+                        </div>
+
+                        {!isEditing ? (
+                          <p className="break-words text-sm text-[#3A071F]/90">{cmt.content}</p>
+                        ) : (
+                          <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                            <input
+                              type="text"
+                              value={editingText}
+                              onChange={(e) => setEditingText(e.target.value)}
+                              maxLength={500}
+                              className="min-h-[40px] flex-1 rounded-xl border border-[#FDA4AF] bg-white px-3 py-1.5 text-sm text-[#3A071F] focus:outline-none"
+                            />
+                            <div className="flex items-center gap-1.5">
+                              <button
+                                type="button"
+                                onClick={() => handleSaveEdit(cmt.id)}
+                                className="inline-flex min-h-[40px] cursor-pointer items-center gap-1 rounded-xl border border-[#FDA4AF] bg-[#FFE4E6] px-3 py-1.5 text-xs font-semibold text-[#9F1239] hover:bg-[#FECDD3]"
+                              >
+                                <Check className="h-3.5 w-3.5" />
+                                <span>Lưu</span>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setEditingId(null);
+                                  setEditingText('');
+                                }}
+                                className="inline-flex min-h-[40px] cursor-pointer items-center gap-1 rounded-xl border border-[#B65A7C]/35 bg-white px-3 py-1.5 text-xs font-semibold text-[#6F1F3B]"
+                              >
+                                <X className="h-3.5 w-3.5" />
+                                <span>Hủy</span>
+                              </button>
+                            </div>
+                          </div>
                         )}
                       </div>
 
-                      {!isEditing ? (
-                        <p className="break-words text-sm text-[#3A071F]/90">{cmt.content}</p>
-                      ) : (
-                        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
-                          <input
-                            type="text"
-                            value={editingText}
-                            onChange={(e) => setEditingText(e.target.value)}
-                            maxLength={500}
-                            className="min-h-[40px] flex-1 rounded-xl border border-[#6F1F3B]/40 bg-white px-3 py-1.5 text-sm text-[#3A071F] focus:outline-none"
-                          />
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              onClick={() => handleSaveEdit(cmt.id)}
-                              className="inline-flex min-h-[40px] cursor-pointer items-center gap-1 rounded-xl bg-[#6F1F3B] px-3 py-1.5 text-xs font-semibold text-[#FFF0F5] hover:bg-[#3A071F]"
-                            >
-                              <Check className="h-3.5 w-3.5" />
-                              <span>Lưu</span>
-                            </button>
+                      {!isEditing && (isOwner || canDelete) && (
+                        <div className="flex shrink-0 items-center gap-1">
+                          {isOwner && (
                             <button
                               type="button"
                               onClick={() => {
-                                setEditingId(null);
-                                setEditingText('');
+                                setEditingId(cmt.id);
+                                setEditingText(cmt.content);
                               }}
-                              className="inline-flex min-h-[40px] cursor-pointer items-center gap-1 rounded-xl border border-[#B65A7C]/35 bg-white px-3 py-1.5 text-xs font-semibold text-[#6F1F3B]"
+                              aria-label="Sửa lời nhắn"
+                              className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-[#B65A7C] transition-colors hover:bg-[#E2A6BA]/30 hover:text-[#3A071F]"
                             >
-                              <X className="h-3.5 w-3.5" />
-                              <span>Hủy</span>
+                              <Pencil className="h-4 w-4" />
                             </button>
-                          </div>
+                          )}
+                          {canDelete && (
+                            <button
+                              type="button"
+                              onClick={() => setPendingDeleteCommentId(cmt.id)}
+                              aria-label="Xóa lời nhắn"
+                              className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-[#B65A7C] transition-colors hover:bg-[#E2A6BA]/30 hover:text-[#3A071F]"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          )}
                         </div>
                       )}
                     </div>
+                  </li>
+                );
+              })}
+            </ul>
 
-                    {!isEditing && (isOwner || canDelete) && (
-                      <div className="flex shrink-0 items-center gap-1">
-                        {isOwner && (
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setEditingId(cmt.id);
-                              setEditingText(cmt.content);
-                            }}
-                            aria-label="Sửa bình luận"
-                            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-[#B65A7C] transition-colors hover:bg-[#E2A6BA]/30 hover:text-[#3A071F]"
-                          >
-                            <Pencil className="h-4 w-4" />
-                          </button>
-                        )}
-                        {canDelete && (
-                          <button
-                            type="button"
-                            onClick={() => setPendingDeleteCommentId(cmt.id)}
-                            aria-label="Xóa bình luận"
-                            className="flex h-9 w-9 cursor-pointer items-center justify-center rounded-full text-[#B65A7C] transition-colors hover:bg-[#E2A6BA]/30 hover:text-[#3A071F]"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
+            {comments.length > visibleCount && (
+              <div className="mt-5 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    onPlayHoverSound();
+                    setVisibleCount((prev) => prev + 10);
+                  }}
+                  className="inline-flex min-h-[40px] cursor-pointer items-center gap-2 rounded-full border border-white bg-white/20 px-6 py-2 text-xs font-bold text-[#5E1131] shadow-[0_0_12px_rgba(255,255,255,0.85)] backdrop-blur-sm transition-all hover:bg-white/35 hover:shadow-[0_0_16px_rgba(255,255,255,1)]"
+                >
+                  <ChevronDown className="h-4 w-4" />
+                  <span>
+                    Xem thêm ({Math.min(10, comments.length - visibleCount)} lời nhắn nữa)
+                  </span>
+                </button>
+              </div>
+            )}
+          </>
         )}
       </section>
 
       <ConfirmModal
         isOpen={pendingDeleteCommentId !== null}
-        title="Xác nhận xoá bình luận"
-        description="Bạn có chắc muốn xoá bình luận này không? Thao tác này không thể hoàn tác."
+        title="Xác nhận xoá lời nhắn"
+        description="Bạn có chắc muốn xoá lời nhắn này không? Thao tác này không thể hoàn tác."
         loading={deletingComment}
         onConfirm={handleConfirmDeleteComment}
         onCancel={() => setPendingDeleteCommentId(null)}

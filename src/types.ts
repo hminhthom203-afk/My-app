@@ -1,4 +1,15 @@
-export type AppView = 'intro' | 'gallery' | 'top' | 'detail' | 'music' | 'admin';
+export type AppView = 'intro' | 'gallery' | 'top' | 'chat' | 'liked' | 'detail' | 'music' | 'admin';
+
+export interface CommunityChatMessage {
+  id: string;
+  authorUid: string;
+  authorName: string;
+  characterId: string;
+  characterName: string;
+  tag: string;
+  content: string;
+  createdAt: string;
+}
 
 export interface CharacterComment {
   id: string;
@@ -19,6 +30,8 @@ export interface Character {
   story: string;
   link: string;
   linkLabel: string;
+  passcode?: string;
+  passcodeHint?: string;
   likesCount: number;
   viewsCount: number;
   createdAt: string;
@@ -39,7 +52,7 @@ export interface MusicTrack {
 
 export interface AdminNotification {
   id: string;
-  type: 'like' | 'comment';
+  type: 'like' | 'comment' | 'chat';
   characterId: string;
   characterName: string;
   actorUid: string;
