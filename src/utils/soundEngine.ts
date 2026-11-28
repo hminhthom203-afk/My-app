@@ -83,6 +83,14 @@ function midiToFreq(midi: number): number {
   return 440 * Math.pow(2, (midi - 69) / 12);
 }
 
+interface MediaControlsCallbacks {
+  onPlay: () => void;
+  onPause: () => void;
+  onNext: () => void;
+  onPrev: () => void;
+  onStop: () => void;
+}
+
 class SoundEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
@@ -98,12 +106,29 @@ class SoundEngine {
   private loopTimer: number | null = null;
   private lastHoverAt = 0;
   private onTrackEndedCb: (() => void) | null = null;
+  private onPlaybackChangeCb: ((playing: boolean) => void) | null = null;
+  private mediaControls: MediaControlsCallbacks | null = null;
+  private mediaHandlersRegistered = false;
   private playRequestId = 0;
   private chunkObjectUrls = new Map<string, string>();
   private timeListeners = new Set<(currentTime: number, duration: number) => void>();
+  private isUsingSilentBridge = false;
+  private isInternalTransition = false;
+  private silentWavUrl: string | null = null;
+  private artworkUrl: string | null = null;
+  private lastPositionSyncAt = 0;
 
   public setOnTrackEnded(cb: (() => void) | null) {
     this.onTrackEndedCb = cb;
+  }
+
+  public setOnPlaybackChange(cb: ((playing: boolean) => void) | null) {
+    this.onPlaybackChangeCb = cb;
+  }
+
+  public setMediaControls(callbacks: MediaControlsCallbacks | null) {
+    this.mediaControls = callbacks;
+    this.registerMediaActionHandlers();
   }
 
   public onTimeUpdate(cb: (currentTime: number, duration: number) => void): () => void {
@@ -115,18 +140,22 @@ class SoundEngine {
   }
 
   public getCurrentTime(): number {
+    if (this.isUsingSilentBridge) return 0;
     return this.audioEl && !Number.isNaN(this.audioEl.currentTime) ? this.audioEl.currentTime : 0;
   }
 
   public getDuration(): number {
+    if (this.isUsingSilentBridge) return 0;
     return this.audioEl && !Number.isNaN(this.audioEl.duration) ? this.audioEl.duration : 0;
   }
 
   public seek(seconds: number) {
+    if (this.isUsingSilentBridge) return;
     if (this.audioEl && Number.isFinite(seconds)) {
       const maxDur = this.audioEl.duration || 0;
       this.audioEl.currentTime = maxDur > 0 ? Math.max(0, Math.min(maxDur, seconds)) : Math.max(0, seconds);
       this.notifyTimeUpdate();
+      this.updateMediaPositionState(true);
     }
   }
 
@@ -134,6 +163,215 @@ class SoundEngine {
     const cur = this.getCurrentTime();
     const dur = this.getDuration();
     this.timeListeners.forEach((cb) => cb(cur, dur));
+  }
+
+  private getSilentWavUrl(): string {
+    if (this.silentWavUrl) return this.silentWavUrl;
+    const sampleRate = 8000;
+    const numSamples = sampleRate;
+    const buffer = new ArrayBuffer(44 + numSamples);
+    const view = new DataView(buffer);
+    const writeStr = (offset: number, str: string) => {
+      for (let i = 0; i < str.length; i++) {
+        view.setUint8(offset + i, str.charCodeAt(i));
+      }
+    };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + numSamples, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate, true);
+    view.setUint16(32, 1, true);
+    view.setUint16(34, 8, true);
+    writeStr(36, 'data');
+    view.setUint32(40, numSamples, true);
+    new Uint8Array(buffer, 44).fill(128);
+    const blob = new Blob([buffer], { type: 'audio/wav' });
+    this.silentWavUrl = URL.createObjectURL(blob);
+    return this.silentWavUrl;
+  }
+
+  private getCandyArtworkUrl(): string {
+    if (this.artworkUrl) return this.artworkUrl;
+    if (typeof document === 'undefined') return '';
+    try {
+      const canvas = document.createElement('canvas');
+      canvas.width = 512;
+      canvas.height = 512;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return '';
+
+      const grad = ctx.createLinearGradient(0, 0, 512, 512);
+      grad.addColorStop(0, '#FFF0F5');
+      grad.addColorStop(0.5, '#FBCFE8');
+      grad.addColorStop(1, '#E2A6BA');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 512, 512);
+
+      ctx.beginPath();
+      ctx.arc(256, 256, 175, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.fill();
+      ctx.lineWidth = 10;
+      ctx.strokeStyle = '#B65A7C';
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.arc(256, 256, 64, 0, Math.PI * 2);
+      ctx.fillStyle = '#6F1F3B';
+      ctx.fill();
+
+      ctx.fillStyle = '#FFF0F5';
+      ctx.font = 'bold 68px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('♪', 256, 260);
+
+      this.artworkUrl = canvas.toDataURL('image/png');
+      return this.artworkUrl;
+    } catch {
+      return '';
+    }
+  }
+
+  private registerMediaActionHandlers() {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    if (this.mediaHandlersRegistered) return;
+    this.mediaHandlersRegistered = true;
+
+    const session = navigator.mediaSession;
+    const setHandler = (
+      action: MediaSessionAction,
+      handler: MediaSessionActionHandler | null
+    ) => {
+      try {
+        session.setActionHandler(action, handler);
+      } catch {
+        // Some browsers do not support certain action types
+      }
+    };
+
+    setHandler('play', () => {
+      if (this.mediaControls) {
+        this.mediaControls.onPlay();
+      } else if (this.currentTrack) {
+        this.resumeOrPlayTrack(this.currentTrack);
+        this.onPlaybackChangeCb?.(true);
+      }
+    });
+
+    setHandler('pause', () => {
+      if (this.mediaControls) {
+        this.mediaControls.onPause();
+      } else {
+        this.pauseMusic();
+        this.onPlaybackChangeCb?.(false);
+      }
+    });
+
+    setHandler('stop', () => {
+      if (this.mediaControls) {
+        this.mediaControls.onStop();
+      } else {
+        this.stopMusic();
+        this.onPlaybackChangeCb?.(false);
+      }
+    });
+
+    setHandler('nexttrack', () => {
+      this.mediaControls?.onNext();
+    });
+
+    setHandler('previoustrack', () => {
+      this.mediaControls?.onPrev();
+    });
+
+    setHandler('seekto', (details) => {
+      if (this.isUsingSilentBridge) return;
+      if (typeof details.seekTime === 'number') {
+        this.seek(details.seekTime);
+      }
+    });
+
+    setHandler('seekbackward', (details) => {
+      if (this.isUsingSilentBridge) return;
+      this.seek(this.getCurrentTime() - (details.seekOffset || 10));
+    });
+
+    setHandler('seekforward', (details) => {
+      if (this.isUsingSilentBridge) return;
+      this.seek(this.getCurrentTime() + (details.seekOffset || 10));
+    });
+  }
+
+  public syncMediaSession(track: MusicTrack | null, playing: boolean) {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    const session = navigator.mediaSession;
+    this.registerMediaActionHandlers();
+
+    if (!track) {
+      try {
+        session.metadata = null;
+        session.playbackState = 'none';
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    try {
+      const artworkSrc = this.getCandyArtworkUrl();
+      session.metadata = new MediaMetadata({
+        title: track.title || 'Nhạc nền Ăn Kẹo Hong',
+        artist: (track.artist || '').trim() || 'Ăn Kẹo Hong',
+        album: 'Hộp Nhạc Ăn Kẹo Hong',
+        artwork: artworkSrc
+          ? [{ src: artworkSrc, sizes: '512x512', type: 'image/png' }]
+          : [],
+      });
+      session.playbackState = playing ? 'playing' : 'paused';
+    } catch {
+      // ignore MediaMetadata errors on unsupported browsers
+    }
+
+    this.updateMediaPositionState(true);
+  }
+
+  private updateMediaPositionState(force = false) {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    const session = navigator.mediaSession;
+    if (typeof session.setPositionState !== 'function') return;
+
+    if (this.isUsingSilentBridge || !this.audioEl) {
+      try {
+        session.setPositionState(undefined);
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    const now = performance.now();
+    if (!force && now - this.lastPositionSyncAt < 900) return;
+    this.lastPositionSyncAt = now;
+
+    const duration = this.audioEl.duration;
+    const position = this.audioEl.currentTime;
+    if (!Number.isFinite(duration) || duration <= 0 || !Number.isFinite(position)) return;
+
+    try {
+      session.setPositionState({
+        duration,
+        playbackRate: this.audioEl.playbackRate || 1,
+        position: Math.max(0, Math.min(duration, position)),
+      });
+    } catch {
+      // ignore invalid position state
+    }
   }
 
   private ensureContext(): AudioContext | null {
@@ -180,7 +418,7 @@ class SoundEngine {
     if (this.musicGain && this.ctx) {
       this.musicGain.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.05);
     }
-    if (this.audioEl) {
+    if (this.audioEl && !this.isUsingSilentBridge) {
       this.audioEl.volume = this.volume;
     }
   }
@@ -263,21 +501,67 @@ class SoundEngine {
       this.loopTimer = null;
     }
     if (this.audioEl) {
-      this.audioEl.pause();
-      this.audioEl.currentTime = 0;
+      this.isInternalTransition = true;
+      try {
+        this.audioEl.pause();
+        this.audioEl.currentTime = 0;
+      } finally {
+        this.isInternalTransition = false;
+      }
     }
+    this.isUsingSilentBridge = false;
   }
 
   private ensureAudioEl(): HTMLAudioElement {
     if (!this.audioEl) {
       this.audioEl = new Audio();
+      this.audioEl.setAttribute('playsinline', 'true');
+      this.audioEl.preload = 'auto';
+
       this.audioEl.addEventListener('timeupdate', () => {
+        if (this.isUsingSilentBridge) return;
         this.notifyTimeUpdate();
+        this.updateMediaPositionState(false);
       });
+
       this.audioEl.addEventListener('durationchange', () => {
         this.notifyTimeUpdate();
+        this.updateMediaPositionState(true);
       });
+
+      this.audioEl.addEventListener('seeked', () => {
+        if (!this.isUsingSilentBridge) {
+          this.updateMediaPositionState(true);
+        }
+      });
+
+      this.audioEl.addEventListener('pause', () => {
+        if (this.isInternalTransition) return;
+        if (this.isPlayingMusic && this.audioEl && !this.audioEl.ended) {
+          this.isPlayingMusic = false;
+          if (this.loopTimer !== null) {
+            window.clearInterval(this.loopTimer);
+            this.loopTimer = null;
+          }
+          this.syncMediaSession(this.currentTrack, false);
+          this.onPlaybackChangeCb?.(false);
+        }
+      });
+
+      this.audioEl.addEventListener('play', () => {
+        if (this.isInternalTransition) return;
+        if (!this.isPlayingMusic && this.currentTrack) {
+          this.isPlayingMusic = true;
+          if (this.isUsingSilentBridge && this.loopTimer === null) {
+            this.startSynthLoopOnly(this.currentTrack.synthPreset || 'rose_waltz');
+          }
+          this.syncMediaSession(this.currentTrack, true);
+          this.onPlaybackChangeCb?.(true);
+        }
+      });
+
       this.audioEl.addEventListener('ended', () => {
+        if (this.isUsingSilentBridge) return;
         this.notifyTimeUpdate();
         if (this.onTrackEndedCb) {
           this.onTrackEndedCb();
@@ -324,6 +608,7 @@ class SoundEngine {
     this.isPlayingMusic = true;
     this.stepIndex = 0;
     const reqId = ++this.playRequestId;
+    this.syncMediaSession(track, true);
 
     const rawUrl = (track.audioUrl || '').trim();
     if (rawUrl.length > 0) {
@@ -332,10 +617,20 @@ class SoundEngine {
           .then((objectUrl) => {
             if (reqId !== this.playRequestId || !this.isPlayingMusic) return;
             const audio = this.ensureAudioEl();
-            audio.loop = false;
-            audio.src = objectUrl;
-            audio.volume = this.volume;
-            return audio.play();
+            this.isInternalTransition = true;
+            try {
+              this.isUsingSilentBridge = false;
+              audio.loop = false;
+              audio.src = objectUrl;
+              audio.volume = this.volume;
+            } finally {
+              this.isInternalTransition = false;
+            }
+            return audio.play().then(() => {
+              if (reqId === this.playRequestId && this.isPlayingMusic) {
+                this.syncMediaSession(track, true);
+              }
+            });
           })
           .catch(() => {
             if (reqId === this.playRequestId && this.isPlayingMusic) {
@@ -346,21 +641,105 @@ class SoundEngine {
       }
 
       const audio = this.ensureAudioEl();
-      audio.loop = false;
-      audio.src = normalizeMediaUrl(rawUrl, 'audio');
-      audio.volume = this.volume;
-      audio.play().catch(() => {
-        if (reqId === this.playRequestId && this.isPlayingMusic) {
-          this.startSynthLoop(track.synthPreset || 'rose_waltz');
-        }
-      });
+      this.isInternalTransition = true;
+      try {
+        this.isUsingSilentBridge = false;
+        audio.loop = false;
+        audio.src = normalizeMediaUrl(rawUrl, 'audio');
+        audio.volume = this.volume;
+      } finally {
+        this.isInternalTransition = false;
+      }
+      audio
+        .play()
+        .then(() => {
+          if (reqId === this.playRequestId && this.isPlayingMusic) {
+            this.syncMediaSession(track, true);
+          }
+        })
+        .catch(() => {
+          if (reqId === this.playRequestId && this.isPlayingMusic) {
+            this.startSynthLoop(track.synthPreset || 'rose_waltz');
+          }
+        });
       return;
     }
 
     this.startSynthLoop(track.synthPreset || 'rose_waltz');
   }
 
-  private startSynthLoop(presetKey: SynthPreset) {
+  public resumeOrPlayTrack(track: MusicTrack) {
+    if (
+      this.currentTrack &&
+      this.currentTrack.id === track.id &&
+      (this.currentTrack.audioUrl || '') === (track.audioUrl || '')
+    ) {
+      this.ensureContext();
+      this.currentTrack = track;
+      this.isPlayingMusic = true;
+      this.syncMediaSession(track, true);
+
+      if (this.isUsingSilentBridge) {
+        this.startSilentBridgeAudio();
+        if (this.loopTimer === null) {
+          this.startSynthLoopOnly(track.synthPreset || 'rose_waltz');
+        }
+        return;
+      }
+
+      if (this.audioEl && this.audioEl.src) {
+        this.audioEl.volume = this.volume;
+        this.audioEl
+          .play()
+          .then(() => {
+            if (this.isPlayingMusic) {
+              this.syncMediaSession(track, true);
+            }
+          })
+          .catch(() => {
+            this.playTrack(track);
+          });
+        return;
+      }
+    }
+    this.playTrack(track);
+  }
+
+  private startSilentBridgeAudio() {
+    try {
+      const audio = this.ensureAudioEl();
+      const wavUrl = this.getSilentWavUrl();
+      this.isInternalTransition = true;
+      try {
+        this.isUsingSilentBridge = true;
+        if (audio.src !== wavUrl) {
+          audio.src = wavUrl;
+        }
+        audio.loop = true;
+        audio.volume = 1;
+      } finally {
+        this.isInternalTransition = false;
+      }
+      this.notifyTimeUpdate();
+      this.updateMediaPositionState(true);
+      void audio
+        .play()
+        .then(() => {
+          if (this.isPlayingMusic && this.currentTrack) {
+            this.syncMediaSession(this.currentTrack, true);
+          }
+        })
+        .catch(() => {});
+    } catch {
+      // ignore silent bridge errors
+    }
+  }
+
+  private startSynthLoopOnly(presetKey: SynthPreset) {
+    if (this.loopTimer !== null) {
+      window.clearInterval(this.loopTimer);
+      this.loopTimer = null;
+    }
     const score = PRESETS[presetKey] || PRESETS.rose_waltz;
     const stepMs = (60 / score.bpm / 2) * 1000;
 
@@ -385,6 +764,11 @@ class SoundEngine {
     this.loopTimer = window.setInterval(tick, stepMs);
   }
 
+  private startSynthLoop(presetKey: SynthPreset) {
+    this.startSilentBridgeAudio();
+    this.startSynthLoopOnly(presetKey);
+  }
+
   public pauseMusic() {
     this.isPlayingMusic = false;
     if (this.loopTimer !== null) {
@@ -392,13 +776,25 @@ class SoundEngine {
       this.loopTimer = null;
     }
     if (this.audioEl) {
-      this.audioEl.pause();
+      this.isInternalTransition = true;
+      try {
+        this.audioEl.pause();
+      } finally {
+        this.isInternalTransition = false;
+      }
     }
+    this.syncMediaSession(this.currentTrack, false);
+  }
+
+  public stopMusic() {
+    this.isPlayingMusic = false;
+    this.stopLoopOnly();
+    this.syncMediaSession(null, false);
   }
 
   public resumeMusic(fallbackTrack?: MusicTrack) {
     if (this.currentTrack) {
-      this.playTrack(this.currentTrack);
+      this.resumeOrPlayTrack(this.currentTrack);
     } else if (fallbackTrack) {
       this.playTrack(fallbackTrack);
     }

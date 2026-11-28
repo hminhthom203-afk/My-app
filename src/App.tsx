@@ -559,6 +559,23 @@ export default function App() {
     return list[(idx + 1) % list.length];
   };
 
+  const pickPrevTrack = (
+    list: MusicTrack[],
+    activeId: string,
+    shuffle: boolean
+  ): MusicTrack | null => {
+    if (list.length === 0) return null;
+    if (shuffle && list.length > 1) {
+      const candidates = list.filter((t) => t.id !== activeId);
+      if (candidates.length > 0) {
+        return candidates[Math.floor(Math.random() * candidates.length)];
+      }
+    }
+    const idx = list.findIndex((t) => t.id === activeId);
+    if (idx <= 0) return list[list.length - 1];
+    return list[idx - 1];
+  };
+
   useEffect(() => {
     soundEngine.setOnTrackEnded(() => {
       const list = tracksRef.current;
@@ -571,7 +588,54 @@ export default function App() {
       soundEngine.playTrack(next);
       setIsPlayingMusic(true);
     });
-    return () => soundEngine.setOnTrackEnded(null);
+    soundEngine.setOnPlaybackChange((playing) => {
+      setIsPlayingMusic(playing);
+    });
+    soundEngine.setMediaControls({
+      onPlay: () => {
+        const list = tracksRef.current;
+        const active =
+          list.find((t) => t.id === currentTrackIdRef.current) || list[0];
+        if (!active) return;
+        if (!currentTrackIdRef.current) {
+          setCurrentTrackId(active.id);
+        }
+        soundEngine.resumeOrPlayTrack(active);
+        setIsPlayingMusic(true);
+        setHasAutoStarted(true);
+      },
+      onPause: () => {
+        soundEngine.pauseMusic();
+        setIsPlayingMusic(false);
+      },
+      onStop: () => {
+        soundEngine.stopMusic();
+        setIsPlayingMusic(false);
+      },
+      onNext: () => {
+        const list = tracksRef.current;
+        const next = pickNextTrack(list, currentTrackIdRef.current, isShuffleRef.current);
+        if (!next) return;
+        setCurrentTrackId(next.id);
+        soundEngine.playTrack(next);
+        setIsPlayingMusic(true);
+        setHasAutoStarted(true);
+      },
+      onPrev: () => {
+        const list = tracksRef.current;
+        const prev = pickPrevTrack(list, currentTrackIdRef.current, isShuffleRef.current);
+        if (!prev) return;
+        setCurrentTrackId(prev.id);
+        soundEngine.playTrack(prev);
+        setIsPlayingMusic(true);
+        setHasAutoStarted(true);
+      },
+    });
+    return () => {
+      soundEngine.setOnTrackEnded(null);
+      soundEngine.setOnPlaybackChange(null);
+      soundEngine.setMediaControls(null);
+    };
   }, []);
 
   // First-click autoplay
@@ -601,6 +665,16 @@ export default function App() {
     () => tracks.find((t) => t.id === currentTrackId) || tracks[0],
     [tracks, currentTrackId]
   );
+
+  useEffect(() => {
+    if (!currentTrack) {
+      soundEngine.syncMediaSession(null, false);
+      return;
+    }
+    if (isPlayingMusic || soundEngine.isPlaying()) {
+      soundEngine.syncMediaSession(currentTrack, isPlayingMusic);
+    }
+  }, [currentTrack, isPlayingMusic]);
 
   const allHashtags = useMemo(() => {
     const set = new Set<string>();
@@ -785,7 +859,7 @@ export default function App() {
       soundEngine.pauseMusic();
       setIsPlayingMusic(false);
     } else if (currentTrack) {
-      soundEngine.playTrack(currentTrack);
+      soundEngine.resumeOrPlayTrack(currentTrack);
       setIsPlayingMusic(true);
       setHasAutoStarted(true);
     }
