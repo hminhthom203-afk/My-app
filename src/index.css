@@ -83,6 +83,27 @@
   }
 }
 
+@keyframes bell-ring {
+  0%, 100% {
+    transform: rotate(0deg);
+  }
+  15% {
+    transform: rotate(15deg);
+  }
+  30% {
+    transform: rotate(-14deg);
+  }
+  45% {
+    transform: rotate(12deg);
+  }
+  60% {
+    transform: rotate(-10deg);
+  }
+  75% {
+    transform: rotate(6deg);
+  }
+}
+
 .animate-float-3d {
   animation: gentle-float-3d 6s ease-in-out infinite;
   transform-style: preserve-3d;
@@ -92,9 +113,15 @@
   animation: slow-aura-pulse 8s ease-in-out infinite;
 }
 
+.animate-bell-ring {
+  transform-origin: top center;
+  animation: bell-ring 1.35s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .animate-float-3d,
-  .animate-aura {
+  .animate-aura,
+  .animate-bell-ring {
     animation: none !important;
   }
 }

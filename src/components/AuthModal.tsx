@@ -16,7 +16,7 @@ import { UserProfile } from '../types';
 interface AuthModalProps {
   isOpen: boolean;
   currentUser: UserProfile | null;
-  onRefreshAuth: () => void;
+  onRefreshAuth: (explicitNickname?: string) => void;
   onClose: () => void;
 }
 
@@ -67,6 +67,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       );
     } else {
       setAwaitingVerification(false);
+      if (!currentUser) {
+        setDisplayName('');
+      }
     }
   }, [isOpen, currentUser]);
 
@@ -80,7 +83,12 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       await auth.currentUser.reload();
       if (auth.currentUser.emailVerified) {
         await auth.currentUser.getIdToken(true);
-        onRefreshAuth();
+        const savedNick =
+          displayName.trim() ||
+          localStorage.getItem('candy_pending_nickname') ||
+          localStorage.getItem(`candy_nickname_${auth.currentUser.uid}`) ||
+          '';
+        onRefreshAuth(savedNick || undefined);
         onClose();
       } else {
         setError(
@@ -131,15 +139,45 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     }
   };
 
+  const validateNickname = (): string | null => {
+    const nick = displayName.trim();
+    if (!nick) {
+      setError('Vui lòng nhập biệt danh trước khi đăng nhập.');
+      return null;
+    }
+    return nick;
+  };
+
   const handleGoogleSignIn = async () => {
     setError('');
     setInfo('');
     setSuggestRegister(false);
+
+    // If not already in awaitingVerification screen, require nickname
+    let nickname = displayName.trim();
+    if (!awaitingVerification) {
+      const valid = validateNickname();
+      if (!valid) return;
+      nickname = valid;
+    } else {
+      nickname =
+        nickname ||
+        localStorage.getItem('candy_pending_nickname') ||
+        '';
+    }
+
     setAwaitingVerification(false);
     setBusy(true);
     try {
-      await signInWithPopup(auth, googleProvider);
-      onRefreshAuth();
+      if (nickname) {
+        localStorage.setItem('candy_pending_nickname', nickname);
+      }
+      const cred = await signInWithPopup(auth, googleProvider);
+      if (nickname) {
+        await updateProfile(cred.user, { displayName: nickname }).catch(() => {});
+        localStorage.setItem(`candy_nickname_${cred.user.uid}`, nickname);
+      }
+      onRefreshAuth(nickname || undefined);
       onClose();
     } catch (err) {
       const code = (err as { code?: string })?.code || '';
@@ -224,16 +262,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setInfo('');
     setSuggestRegister(false);
     setAwaitingVerification(false);
+
+    const nickname = validateNickname();
+    if (!nickname) return;
+
     const cleanEmail = email.trim();
     if (!cleanEmail || !password) {
-      setError('Vui lòng nhập đầy đủ Gmail và mật khẩu.');
+      setError('Vui lòng nhập đầy đủ Biệt danh, Gmail và mật khẩu.');
       return;
     }
 
     setBusy(true);
     try {
+      localStorage.setItem('candy_pending_nickname', nickname);
       if (mode === 'login') {
         const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
+        await updateProfile(cred.user, { displayName: nickname }).catch(() => {});
+        localStorage.setItem(`candy_nickname_${cred.user.uid}`, nickname);
         await cred.user.reload().catch(() => {});
         if (!cred.user.emailVerified) {
           await sendEmailVerification(cred.user).catch(() => {});
@@ -244,15 +289,14 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           return;
         }
         await cred.user.getIdToken(true).catch(() => {});
-        onRefreshAuth();
+        onRefreshAuth(nickname);
         onClose();
       } else {
         const cred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
-        if (displayName.trim()) {
-          await updateProfile(cred.user, { displayName: displayName.trim() }).catch(() => {});
-        }
+        await updateProfile(cred.user, { displayName: nickname }).catch(() => {});
+        localStorage.setItem(`candy_nickname_${cred.user.uid}`, nickname);
         await sendEmailVerification(cred.user).catch(() => {});
-        onRefreshAuth();
+        onRefreshAuth(nickname);
         setAwaitingVerification(true);
         setInfo(
           `Đăng ký thành công! Vui lòng mở hộp thư ${cleanEmail} (kiểm tra cả Thư rác / Spam) bấm vào liên kết xác minh rồi bấm "Tôi đã xác minh email" bên dưới.`
@@ -466,21 +510,21 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         ) : (
           <>
             <form onSubmit={handleEmailAuth} className="space-y-3.5">
-              {mode === 'register' && (
-                <div>
-                  <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
-                    Tên hiển thị
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    maxLength={80}
-                    className="min-h-[44px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3.5 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
-                  />
-                </div>
-              )}
+              <div>
+                <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
+                  Biệt danh <span className="text-[#E11D48]">*</span>
+                </label>
+                <input
+                  type="text"
+                  name="nickname"
+                  autoComplete="off"
+                  required
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                  maxLength={80}
+                  className="min-h-[44px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3.5 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
+                />
+              </div>
 
               <div>
                 <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">Gmail</label>

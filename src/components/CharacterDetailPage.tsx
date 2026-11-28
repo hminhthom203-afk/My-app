@@ -2,7 +2,6 @@ import React, { useState } from 'react';
 import { motion } from 'motion/react';
 import {
   ArrowLeft,
-  Heart,
   MessageCircle,
   Send,
   Trash2,
@@ -12,7 +11,6 @@ import {
   BookOpen,
   ShoppingBag,
   ChevronDown,
-  Reply,
 } from 'lucide-react';
 import { Character, CharacterComment, UserProfile } from '../types';
 import { AvatarFrame } from './AvatarFrame';
@@ -27,7 +25,7 @@ interface CharacterDetailPageProps {
   currentUser: UserProfile | null;
   onBack: () => void;
   onToggleLike: (characterId: string) => void;
-  onAddComment: (characterId: string, content: string, replyToAuthorUid?: string) => Promise<boolean>;
+  onAddComment: (characterId: string, content: string) => Promise<boolean>;
   onUpdateComment: (characterId: string, commentId: string, content: string) => Promise<void>;
   onDeleteComment: (characterId: string, commentId: string) => Promise<void>;
   onRequestAuth: () => void;
@@ -37,10 +35,10 @@ interface CharacterDetailPageProps {
 export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
   character,
   comments,
-  isLiked,
+  isLiked: _isLiked,
   currentUser,
   onBack,
-  onToggleLike,
+  onToggleLike: _onToggleLike,
   onAddComment,
   onUpdateComment,
   onDeleteComment,
@@ -49,7 +47,6 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
 }) => {
   const [commentText, setCommentText] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [replyToAuthorUid, setReplyToAuthorUid] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [authNotice, setAuthNotice] = useState<string | null>(null);
@@ -68,10 +65,9 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
     if (!trimmed || submitting) return;
     setSubmitting(true);
     try {
-      const ok = await onAddComment(character.id, trimmed, replyToAuthorUid || undefined);
+      const ok = await onAddComment(character.id, trimmed);
       if (ok) {
         setCommentText('');
-        setReplyToAuthorUid(null);
         setAuthNotice(null);
       }
     } finally {
@@ -256,12 +252,7 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
             id="comment-input"
             type="text"
             value={commentText}
-            onChange={(e) => {
-              setCommentText(e.target.value);
-              if (!e.target.value.includes('@')) {
-                setReplyToAuthorUid(null);
-              }
-            }}
+            onChange={(e) => setCommentText(e.target.value)}
             maxLength={500}
             placeholder={
               currentUser
@@ -335,24 +326,7 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
                         </div>
 
                         {!isEditing ? (
-                          <>
-                            <p className="break-words text-sm text-[#3A071F]/90">{cmt.content}</p>
-                            {currentUser && currentUser.uid !== cmt.authorUid && (
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setCommentText(`@${cmt.authorName} `);
-                                  setReplyToAuthorUid(cmt.authorUid);
-                                  const inputEl = document.getElementById('comment-input');
-                                  if (inputEl) inputEl.focus();
-                                }}
-                                className="mt-1.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold text-[#8C1B4A] hover:bg-[#FFE4E6] hover:text-[#9F1239] transition-colors"
-                              >
-                                <Reply className="h-3 w-3" />
-                                <span>Trả lời</span>
-                              </button>
-                            )}
-                          </>
+                          <p className="break-words text-sm text-[#3A071F]/90">{cmt.content}</p>
                         ) : (
                           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                             <input

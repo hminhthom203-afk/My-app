@@ -121,7 +121,8 @@ service cloud.firestore {
       && data.characterName is string && data.characterName.size() >= 1 && data.characterName.size() <= 80
       && data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128
       && data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 80
-      && data.recipientEmail is string && data.recipientEmail.size() >= 3 && data.recipientEmail.size() <= 160
+      && data.message is string && data.message.size() >= 1 && data.message.size() <= 600
+      && data.recipientEmail is string && data.recipientEmail == 'hminhthom203@gmail.com'
       && data.emailStatus in ['sent', 'queued', 'not_configured']
       && data.read is bool
       && data.createdAt is timestamp;
@@ -169,6 +170,8 @@ service cloud.firestore {
         && isValidChatMessage(incoming())
         && incoming().authorUid == request.auth.uid
         && incoming().createdAt == request.time;
+
+      allow update: if false;
 
       allow delete: if isVerifiedSignedIn()
         && isValidId(chatId)
@@ -273,8 +276,8 @@ service cloud.firestore {
         allow update: if isVerifiedSignedIn()
           && isValidId(charId)
           && isValidId(commentId)
-          && isValidComment(incoming(), charId)
           && (isAdmin() || existing().authorUid == request.auth.uid)
+          && isValidComment(incoming(), charId)
           && incoming().diff(existing()).affectedKeys().hasOnly(['content', 'updatedAt'])
           && incoming().characterId == existing().characterId
           && incoming().authorUid == existing().authorUid
@@ -332,12 +335,10 @@ service cloud.firestore {
       }
     }
 
-    // Notifications (Admin + Viewer notifications for replies / interactions)
+    // Notifications (Admin-only inbox; users can create notifications or delete their own character-like notification upon unliking)
     match /notifications/{notifId} {
-      allow get: if isVerifiedSignedIn()
-        && isValidId(notifId)
-        && (isAdmin() || resource.data.recipientEmail == request.auth.token.email);
-      allow list: if isVerifiedSignedIn();
+      allow get: if isAdmin() && isValidId(notifId);
+      allow list: if isAdmin();
 
       allow create: if isVerifiedSignedIn()
         && isValidId(notifId)
@@ -345,12 +346,14 @@ service cloud.firestore {
         && incoming().actorUid == request.auth.uid
         && incoming().read == false
         && incoming().createdAt == request.time
-        && exists(/databases/$(database)/documents/characters/$(incoming().characterId));
+        && (
+          incoming().characterId == 'general'
+          || exists(/databases/$(database)/documents/characters/$(incoming().characterId))
+        );
 
-      allow update: if isVerifiedSignedIn()
+      allow update: if isAdmin()
         && isValidId(notifId)
         && isValidNotification(incoming())
-        && (isAdmin() || existing().recipientEmail == request.auth.token.email)
         && incoming().diff(existing()).affectedKeys().hasOnly(['read', 'emailStatus'])
         && incoming().type == existing().type
         && incoming().characterId == existing().characterId
@@ -366,10 +369,8 @@ service cloud.firestore {
         || (
           isVerifiedSignedIn()
           && resource != null
-          && (
-            existing().recipientEmail == request.auth.token.email
-            || (existing().type == 'like' && existing().actorUid == request.auth.uid)
-          )
+          && existing().type == 'like'
+          && existing().actorUid == request.auth.uid
         )
       );
     }

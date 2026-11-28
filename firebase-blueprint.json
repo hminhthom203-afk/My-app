@@ -408,7 +408,7 @@
     },
     "/notifications/{notifId}": {
       "schema": { "$ref": "#/entities/AdminNotification" },
-      "description": "Admin inbox notifications for hearts and comments."
+      "description": "Admin-only inbox notifications when users like characters or leave comments/messages."
     },
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },

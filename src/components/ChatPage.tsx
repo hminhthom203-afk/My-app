@@ -192,6 +192,7 @@ export const ChatPage: React.FC<ChatPageProps> = ({
           {/* Text Area */}
           <div className="relative">
             <textarea
+              id="chat-input"
               value={messageText}
               onChange={(e) => setMessageText(e.target.value)}
               maxLength={500}

@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import {
   Plus,
@@ -97,6 +97,12 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const [deleting, setDeleting] = useState(false);
 
   const unreadCount = notifications.filter((n) => !n.read).length;
+
+  useEffect(() => {
+    if (tab === 'notifications' && unreadCount > 0) {
+      void onMarkAllNotificationsRead();
+    }
+  }, [tab, unreadCount, onMarkAllNotificationsRead]);
 
   // Character form state
   const [editingCharId, setEditingCharId] = useState<string | null>(null);

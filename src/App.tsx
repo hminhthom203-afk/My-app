@@ -15,7 +15,6 @@ import {
   setDoc,
   Timestamp,
   updateDoc,
-  where,
   writeBatch,
 } from 'firebase/firestore';
 import {
@@ -55,7 +54,6 @@ import { MusicPage } from './components/MusicPage';
 import { MusicDock } from './components/MusicDock';
 import { AdminPage } from './components/AdminPage';
 import { AuthModal } from './components/AuthModal';
-import { NotificationModal } from './components/NotificationModal';
 
 function tsToIso(val: unknown): string {
   if (val instanceof Timestamp) {
@@ -77,7 +75,7 @@ function slugId(raw: string): string {
 }
 
 function buildLikeNotifId(uid: string, charId: string): string {
-  return `like_${uid}_${charId}`.slice(0, 128);
+  return `like_${uid}_${charId}`.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 128);
 }
 
 export default function App() {
@@ -101,7 +99,6 @@ export default function App() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [activeHashtag, setActiveHashtag] = useState<string>('all');
-  const [notifModalOpen, setNotifModalOpen] = useState(false);
 
   const [currentTrackId, setCurrentTrackId] = useState<string>('');
   const [isPlayingMusic, setIsPlayingMusic] = useState(false);
@@ -147,7 +144,10 @@ export default function App() {
     }
   };
 
-  const syncFirebaseUser = async (fbUser: typeof auth.currentUser) => {
+  const syncFirebaseUser = async (
+    fbUser: typeof auth.currentUser,
+    explicitNickname?: string
+  ) => {
     if (!fbUser) {
       setCurrentUser(null);
       setLikedIds(new Set());
@@ -157,17 +157,32 @@ export default function App() {
     }
     const email = (fbUser.email || '').toLowerCase();
     const isAdmin = email === ADMIN_EMAIL && fbUser.emailVerified;
-    const safeName =
-      (fbUser.displayName || '').trim() || email.split('@')[0] || 'Thành viên';
-    const profile: UserProfile = {
-      uid: fbUser.uid,
-      name: safeName,
-      email,
-      emailVerified: fbUser.emailVerified,
-      role: isAdmin ? 'admin' : 'viewer',
-    };
-    setCurrentUser(profile);
-    setAuthReady(true);
+
+    let pendingNick = '';
+    try {
+      pendingNick = (
+        explicitNickname ||
+        localStorage.getItem('candy_pending_nickname') ||
+        ''
+      ).trim();
+    } catch {
+      pendingNick = (explicitNickname || '').trim();
+    }
+
+    let cachedUidNick = '';
+    try {
+      cachedUidNick = (localStorage.getItem(`candy_nickname_${fbUser.uid}`) || '').trim();
+    } catch {
+      cachedUidNick = '';
+    }
+
+    const fbDisplay = (fbUser.displayName || '').trim();
+
+    let resolvedName =
+      pendingNick ||
+      cachedUidNick ||
+      fbDisplay ||
+      (isAdmin ? 'Chủ Tiệm Kẹo' : 'Thành viên');
 
     if (fbUser.emailVerified && !isAdmin) {
       const userRef = doc(db, 'users', fbUser.uid);
@@ -176,17 +191,28 @@ export default function App() {
         if (!snap.exists()) {
           await setDoc(userRef, {
             uid: fbUser.uid,
-            name: profile.name.slice(0, 80),
-            email: profile.email.slice(0, 160),
+            name: resolvedName.slice(0, 80),
+            email: email.slice(0, 160),
             role: 'viewer',
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           });
         } else {
-          await updateDoc(userRef, {
-            name: profile.name.slice(0, 80),
-            updatedAt: serverTimestamp(),
-          });
+          const existingName = String(snap.data()?.name || '').trim();
+          if (pendingNick) {
+            resolvedName = pendingNick;
+            await updateDoc(userRef, {
+              name: resolvedName.slice(0, 80),
+              updatedAt: serverTimestamp(),
+            });
+          } else if (existingName) {
+            resolvedName = existingName;
+          } else {
+            await updateDoc(userRef, {
+              name: resolvedName.slice(0, 80),
+              updatedAt: serverTimestamp(),
+            });
+          }
         }
       } catch (err) {
         reportActionFailure(
@@ -197,6 +223,27 @@ export default function App() {
         );
       }
     }
+
+    try {
+      if (resolvedName && resolvedName !== 'Thành viên') {
+        localStorage.setItem(`candy_nickname_${fbUser.uid}`, resolvedName.slice(0, 80));
+      }
+      if (pendingNick) {
+        localStorage.removeItem('candy_pending_nickname');
+      }
+    } catch {
+      // ignore storage failure
+    }
+
+    const profile: UserProfile = {
+      uid: fbUser.uid,
+      name: resolvedName.slice(0, 80),
+      email,
+      emailVerified: fbUser.emailVerified,
+      role: isAdmin ? 'admin' : 'viewer',
+    };
+    setCurrentUser(profile);
+    setAuthReady(true);
   };
 
   // 1. Firebase Auth listener
@@ -276,19 +323,13 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  // 4. Listen to Notifications (Admin gets all, signed-in users get notifications directed to them)
+  // 4. Listen to Notifications (Admin only)
   useEffect(() => {
-    if (!currentUser) {
+    if (!currentUser || currentUser.role !== 'admin') {
       setNotifications([]);
       return;
     }
-    const q =
-      currentUser.role === 'admin'
-        ? query(collection(db, 'notifications'), orderBy('createdAt', 'desc'))
-        : query(
-            collection(db, 'notifications'),
-            where('recipientEmail', '==', currentUser.email)
-          );
+    const q = query(collection(db, 'notifications'), orderBy('createdAt', 'desc'));
 
     const unsub = onSnapshot(
       q,
@@ -311,7 +352,6 @@ export default function App() {
           };
         });
 
-        // Sort descending by time
         list.sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
         );
@@ -835,8 +875,7 @@ export default function App() {
 
   const handleAddComment = async (
     charId: string,
-    content: string,
-    replyToAuthorUid?: string
+    content: string
   ): Promise<boolean> => {
     if (!currentUser || !currentUser.emailVerified) {
       setAuthModalOpen(true);
@@ -846,6 +885,7 @@ export default function App() {
     const targetChar = characters.find((c) => c.id === charId);
     const commentId = `cmt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const path = `characters/${charId}/comments/${commentId}`;
+
     try {
       await setDoc(doc(db, path), {
         characterId: charId,
@@ -858,34 +898,6 @@ export default function App() {
       soundEngine.playSuccess();
       if (targetChar) {
         void notifyAdmin('comment', targetChar, content);
-
-        // If this is a reply to another user, also notify that user
-        if (replyToAuthorUid && replyToAuthorUid !== currentUser.uid) {
-          try {
-            const userSnap = await getDoc(doc(db, 'users', replyToAuthorUid));
-            if (userSnap.exists()) {
-              const userData = userSnap.data();
-              const recipientEmail = userData?.email;
-              if (recipientEmail && typeof recipientEmail === 'string') {
-                const userNotifId = `notif-user-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-                await setDoc(doc(db, 'notifications', userNotifId), {
-                  type: 'comment',
-                  characterId: targetChar.id,
-                  characterName: targetChar.name.slice(0, 80),
-                  actorUid: currentUser.uid,
-                  actorName: currentUser.name.slice(0, 80),
-                  message: `${currentUser.name} đã trả lời bình luận của bạn: "${content.slice(0, 100)}"`,
-                  recipientEmail,
-                  emailStatus: 'not_configured',
-                  read: false,
-                  createdAt: serverTimestamp(),
-                });
-              }
-            }
-          } catch {
-            // Ignore optional recipient notification error
-          }
-        }
       }
       return true;
     } catch (err) {
@@ -952,6 +964,7 @@ export default function App() {
     setActionError(null);
     const chatId = `chat-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
     const path = `community_chats/${chatId}`;
+
     try {
       await setDoc(doc(db, path), {
         authorUid: currentUser.uid,
@@ -963,6 +976,24 @@ export default function App() {
         createdAt: serverTimestamp(),
       });
       soundEngine.playSuccess();
+
+      // Always notify admin of new community chat messages (preserved even if deleted later)
+      const adminNotifId = `notif_admin_chat_${Date.now().toString(36)}_${Math.random()
+        .toString(36)
+        .slice(2, 6)}`;
+      void setDoc(doc(db, 'notifications', adminNotifId), {
+        type: 'comment',
+        characterId: 'general',
+        characterName: 'Góp ý chung',
+        actorUid: currentUser.uid,
+        actorName: currentUser.name.slice(0, 80),
+        message: input.content.slice(0, 600),
+        recipientEmail: ADMIN_EMAIL,
+        emailStatus: 'not_configured',
+        read: false,
+        createdAt: serverTimestamp(),
+      }).catch(() => {});
+
       return true;
     } catch (err) {
       reportActionFailure(
@@ -1231,12 +1262,11 @@ export default function App() {
         });
         await batch.commit();
       }
-    } catch (err) {
-      reportActionFailure(
-        err,
-        OperationType.UPDATE,
-        'notifications',
-        'Không thể cập nhật trạng thái đã xem thông báo trên Firebase.'
+    } catch {
+      await Promise.all(
+        unread.map((n) =>
+          updateDoc(doc(db, 'notifications', n.id), { read: true }).catch(() => {})
+        )
       );
     }
   };
@@ -1307,28 +1337,35 @@ export default function App() {
           </button>
 
           <div className="flex shrink-0 items-center gap-2">
-            {/* Nút thông báo nằm cạnh nút Đăng nhập / Đăng xuất, cùng hàng và màu pastel */}
-            <button
-              type="button"
-              onClick={() => {
-                soundEngine.playChime();
-                setNotifModalOpen(true);
-              }}
-              title="Thông báo tương tác"
-              aria-label={`Thông báo (${unreadNotificationsCount} chưa đọc)`}
-              className="relative inline-flex min-h-[38px] cursor-pointer items-center justify-center gap-1.5 rounded-full border border-white/95 bg-[#FFD6E6]/55 px-3 py-1.5 text-xs font-bold text-[#7A1840] shadow-[0_0_12px_rgba(255,255,255,0.85)] transition-all whitespace-nowrap shrink-0 hover:border-white hover:bg-[#FFD6E6]/75"
-            >
-              <Bell
-                className={`h-4 w-4 ${
-                  unreadNotificationsCount > 0 ? 'text-[#E11D48] animate-bounce' : 'text-[#7A1840]'
-                }`}
-              />
-              {unreadNotificationsCount > 0 && (
-                <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#E11D48] px-1 text-[10px] font-black leading-none text-white shadow-[0_0_8px_rgba(225,29,72,0.9)] animate-pulse">
-                  !
-                </span>
-              )}
-            </button>
+            {/* Chỉ quản trị viên mới có chuông báo hiệu (lắc + dấu ! khi có thông báo chưa đọc, xem trong mục Quản trị) */}
+            {currentUser?.role === 'admin' && (
+              <div
+                title={
+                  unreadNotificationsCount > 0
+                    ? 'Có thông báo mới — vào mục Quản trị để xem'
+                    : 'Không có thông báo mới'
+                }
+                aria-label={
+                  unreadNotificationsCount > 0
+                    ? `Có ${unreadNotificationsCount} thông báo chưa đọc`
+                    : 'Không có thông báo mới'
+                }
+                className="relative inline-flex min-h-[38px] items-center justify-center gap-1 rounded-full border border-white/95 bg-[#FFD6E6]/55 px-3 py-1.5 text-xs font-bold text-[#7A1840] shadow-[0_0_12px_rgba(255,255,255,0.85)] whitespace-nowrap shrink-0 select-none"
+              >
+                <Bell
+                  className={`h-4 w-4 ${
+                    unreadNotificationsCount > 0
+                      ? 'text-[#E11D48] animate-bell-ring'
+                      : 'text-[#7A1840]'
+                  }`}
+                />
+                {unreadNotificationsCount > 0 && (
+                  <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#E11D48] px-1 text-[10px] font-black leading-none text-white shadow-[0_0_8px_rgba(225,29,72,0.9)] animate-pulse">
+                    !
+                  </span>
+                )}
+              </div>
+            )}
 
             {currentUser ? (
               <div className="flex items-center gap-2">
@@ -1357,6 +1394,11 @@ export default function App() {
                   type="button"
                   onClick={async () => {
                     soundEngine.playChime();
+                    try {
+                      localStorage.removeItem('candy_pending_nickname');
+                    } catch {
+                      // ignore
+                    }
                     await signOut(auth);
                     if (view === 'admin') setView('gallery');
                   }}
@@ -2110,29 +2152,10 @@ export default function App() {
       <AuthModal
         isOpen={authModalOpen}
         currentUser={currentUser}
-        onRefreshAuth={() => {
-          void syncFirebaseUser(auth.currentUser);
+        onRefreshAuth={(explicitNickname) => {
+          void syncFirebaseUser(auth.currentUser, explicitNickname);
         }}
         onClose={() => setAuthModalOpen(false)}
-      />
-
-      <NotificationModal
-        isOpen={notifModalOpen}
-        notifications={notifications}
-        onClose={() => setNotifModalOpen(false)}
-        onOpenCharacter={(characterId) => {
-          void handleOpenDetail(characterId);
-          setNotifModalOpen(false);
-          setTimeout(() => {
-            const el = document.getElementById('comments-section');
-            if (el) {
-              el.scrollIntoView({ behavior: 'smooth', block: 'start' });
-            }
-          }, 350);
-        }}
-        onMarkAllRead={handleMarkAllNotificationsRead}
-        onDeleteNotification={handleDeleteNotification}
-        onDeleteAllNotifications={handleDeleteAllNotifications}
       />
     </div>
   );

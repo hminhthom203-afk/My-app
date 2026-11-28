@@ -1,6 +1,6 @@
 import React from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Bell, X, Trash2, Heart, MessageCircle, ExternalLink, CheckCheck } from 'lucide-react';
+import { Bell, X, Trash2, Heart, MessageCircle, CheckCheck } from 'lucide-react';
 import { AdminNotification } from '../types';
 
 interface NotificationModalProps {
@@ -8,6 +8,7 @@ interface NotificationModalProps {
   notifications: AdminNotification[];
   onClose: () => void;
   onOpenCharacter: (characterId: string) => void;
+  onOpenChat: () => void;
   onMarkAllRead: () => void;
   onDeleteNotification: (id: string) => void;
   onDeleteAllNotifications: () => void;
@@ -18,6 +19,7 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
   notifications,
   onClose,
   onOpenCharacter,
+  onOpenChat,
   onMarkAllRead,
   onDeleteNotification,
   onDeleteAllNotifications,
@@ -51,10 +53,10 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
               </span>
               <div>
                 <h2 id="notif-modal-title" className="font-cute text-base font-bold text-[#5E0B33]">
-                  Thông Báo
+                  Thông Báo Quản Trị
                 </h2>
                 <span className="text-[11px] font-semibold text-[#8C1B4A]">
-                  {unreadCount > 0 ? `${unreadCount} thông báo mới` : 'Hộp thư thông báo'}
+                  {unreadCount > 0 ? `${unreadCount} thông báo mới` : 'Hộp thư quản trị'}
                 </span>
               </div>
             </div>
@@ -102,46 +104,57 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
                   Chưa có thông báo nào
                 </p>
                 <p className="mt-1 text-xs text-[#8C1B4A]/80">
-                  Khi có lượt tương tác hay lời nhắn mới, bạn sẽ nhận được thông báo tại đây nha!
+                  Khi có người xem thả tim hoặc bình luận, thông báo sẽ hiện tại đây nha!
                 </p>
               </div>
             ) : (
               notifications.map((notif) => {
                 const isLike = notif.type === 'like';
+                const isChat = notif.characterId === 'general';
+
                 return (
                   <div
                     key={notif.id}
                     onClick={() => {
-                      if (notif.characterId) {
+                      if (isChat) {
+                        onOpenChat();
+                        onClose();
+                      } else if (notif.characterId) {
                         onOpenCharacter(notif.characterId);
                         onClose();
                       }
                     }}
                     className={`group relative flex cursor-pointer items-start justify-between gap-2.5 rounded-2xl border p-3 transition-all hover:scale-[1.01] ${
                       !notif.read
-                        ? 'border-[#FDA4AF] bg-white/90 shadow-sm'
-                        : 'border-white/70 bg-white/50 opacity-80 hover:opacity-100'
+                        ? 'border-[#FDA4AF] bg-white/95 shadow-sm'
+                        : 'border-white/70 bg-white/55 opacity-85 hover:opacity-100'
                     }`}
                   >
                     <div className="flex items-start gap-2.5 min-w-0 flex-1">
                       <span
                         className={`mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full ${
-                          isLike ? 'bg-[#FFE4E6] text-[#E11D48]' : 'bg-[#E0F2FE] text-[#0284C7]'
+                          isLike
+                            ? 'bg-[#FFE4E6] text-[#E11D48]'
+                            : 'bg-[#EDE9FE] text-[#7C3AED]'
                         }`}
                       >
-                        {isLike ? <Heart className="h-3.5 w-3.5 fill-current" /> : <MessageCircle className="h-3.5 w-3.5" />}
+                        {isLike ? (
+                          <Heart className="h-3.5 w-3.5 fill-current" />
+                        ) : (
+                          <MessageCircle className="h-3.5 w-3.5" />
+                        )}
                       </span>
 
                       <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-1.5 text-xs">
+                        <div className="flex flex-wrap items-center gap-1 text-xs">
                           <span className="font-bold text-[#3A071F] truncate">{notif.actorName}</span>
-                          <span className="text-[11px] text-[#8C1B4A]/70">
-                            {isLike ? 'đã thả tim' : 'đã gửi lời nhắn'}
+                          <span className="text-[11px] text-[#8C1B4A]/80">
+                            {isLike ? 'đã thả tim nhân vật' : 'đã gửi bình luận'}
                           </span>
                         </div>
 
                         <p className="mt-0.5 text-xs font-semibold text-[#5E0B33] truncate">
-                          Nhân vật: {notif.characterName}
+                          {isChat ? 'Mục: Góc Trò Chuyện' : `Nhân vật: ${notif.characterName}`}
                         </p>
 
                         {!isLike && notif.message && (
@@ -169,7 +182,7 @@ export const NotificationModal: React.FC<NotificationModalProps> = ({
                           onDeleteNotification(notif.id);
                         }}
                         aria-label="Xóa thông báo này"
-                        className="opacity-60 hover:opacity-100 p-1 rounded-full text-[#B65A7C] hover:bg-[#FFE4E6] hover:text-[#E11D48]"
+                        className="opacity-65 hover:opacity-100 p-1 rounded-full text-[#B65A7C] hover:bg-[#FFE4E6] hover:text-[#E11D48]"
                       >
                         <Trash2 className="h-3.5 w-3.5" />
                       </button>
