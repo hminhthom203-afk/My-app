@@ -27,10 +27,14 @@
     height: 0;
   }
 
-  html,
+  html {
+    max-width: 100%;
+    overflow-x: clip;
+  }
+
   body {
     max-width: 100%;
-    overflow-x: hidden;
+    overflow-x: clip;
     font-family: var(--font-body);
     color: #3A071F;
     background-color: #FFF5F8;
@@ -43,6 +47,19 @@
   .font-artistic {
     font-family: var(--font-artistic);
   }
+}
+
+.fixed-rabbit-bg {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 100vh;
+  height: 100lvh;
+  z-index: 0;
+  pointer-events: none;
+  overflow: hidden;
+  background-color: #FFF5F8;
 }
 
 /* Soft 3D gentle levitation */

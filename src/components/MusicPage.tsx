@@ -1,20 +1,26 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { motion } from 'motion/react';
 import { Play, Pause, Volume2, VolumeX, Music2, Disc3, Shuffle, SkipForward } from 'lucide-react';
 import { MusicTrack } from '../types';
+import { soundEngine } from '../utils/soundEngine';
+
+function formatTime(sec: number): string {
+  if (!Number.isFinite(sec) || sec <= 0) return '0:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, '0')}`;
+}
 
 interface MusicPageProps {
   tracks: MusicTrack[];
   currentTrackId: string;
   isPlaying: boolean;
   isShuffle: boolean;
-  volume: number;
   sfxEnabled: boolean;
   onSelectTrack: (track: MusicTrack) => void;
   onTogglePlay: () => void;
   onNextTrack: () => void;
   onToggleShuffle: () => void;
-  onChangeVolume: (v: number) => void;
   onToggleSfx: () => void;
   onPlayHoverSound: () => void;
 }
@@ -24,17 +30,25 @@ export const MusicPage: React.FC<MusicPageProps> = ({
   currentTrackId,
   isPlaying,
   isShuffle,
-  volume,
   sfxEnabled,
   onSelectTrack,
   onTogglePlay,
   onNextTrack,
   onToggleShuffle,
-  onChangeVolume,
   onToggleSfx,
   onPlayHoverSound,
 }) => {
   const activeTrack = tracks.find((t) => t.id === currentTrackId) || tracks[0];
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  useEffect(() => {
+    const unsub = soundEngine.onTimeUpdate((cur, dur) => {
+      setCurrentTime(cur);
+      setDuration(dur);
+    });
+    return () => unsub();
+  }, []);
 
   return (
     <motion.div
@@ -61,98 +75,109 @@ export const MusicPage: React.FC<MusicPageProps> = ({
 
       {/* Now Playing Showcase */}
       {activeTrack && (
-        <div className="mb-8 flex flex-col items-center justify-between gap-6 rounded-3xl border border-[#B65A7C]/25 bg-gradient-to-br from-[#6F1F3B] to-[#3A071F] p-6 text-[#FFF0F5] shadow-[0_20px_50px_-15px_rgba(58,7,31,0.45)] sm:flex-row sm:p-8">
-          <div className="flex items-center gap-4">
-            <div
-              className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-full border border-[#E2A6BA]/40 bg-[#FFF0F5]/10 ${
-                isPlaying ? 'animate-spin' : ''
-              }`}
-              style={{ animationDuration: '9s' }}
-            >
-              <Disc3 className="h-8 w-8 text-[#E2A6BA]" />
+        <div className="mb-8 flex flex-col gap-5 rounded-3xl border border-[#B65A7C]/25 bg-gradient-to-br from-[#6F1F3B] to-[#3A071F] p-6 text-[#FFF0F5] shadow-[0_20px_50px_-15px_rgba(58,7,31,0.45)] sm:p-8">
+          <div className="flex flex-col items-center justify-between gap-6 sm:flex-row">
+            <div className="flex items-center gap-4">
+              <div
+                className={`flex h-16 w-16 shrink-0 items-center justify-center rounded-full border border-[#E2A6BA]/40 bg-[#FFF0F5]/10 ${
+                  isPlaying ? 'animate-spin' : ''
+                }`}
+                style={{ animationDuration: '9s' }}
+              >
+                <Disc3 className="h-8 w-8 text-[#E2A6BA]" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-xs font-medium text-[#E2A6BA]">
+                  {isPlaying ? 'Đang phát' : 'Đang tạm dừng'}
+                </p>
+                <h2 className="font-cute truncate text-xl font-bold text-[#FFF0F5]">
+                  {activeTrack.title}
+                </h2>
+                {Boolean(activeTrack.artist && activeTrack.artist.trim()) && (
+                  <p className="truncate text-xs text-[#E2A6BA]/85">
+                    {activeTrack.artist}
+                  </p>
+                )}
+              </div>
             </div>
-            <div className="min-w-0">
-              <p className="text-xs font-medium text-[#E2A6BA]">
-                {isPlaying ? 'Đang phát' : 'Đang tạm dừng'}
-              </p>
-              <h2 className="font-cute truncate text-xl font-bold text-[#FFF0F5]">
-                {activeTrack.title}
-              </h2>
-              <p className="truncate text-xs text-[#E2A6BA]/85">
-                {activeTrack.artist}
-              </p>
+
+            <div className="flex flex-wrap items-center justify-center gap-2.5">
+              <button
+                type="button"
+                onClick={onTogglePlay}
+                className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-full bg-[#FFF0F5] px-6 py-2 text-sm font-bold text-[#3A071F] transition-transform hover:scale-[1.02]"
+              >
+                {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+                <span className="whitespace-nowrap">{isPlaying ? 'Tạm dừng' : 'Phát nhạc'}</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onNextTrack}
+                disabled={tracks.length === 0}
+                className="inline-flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-full border border-[#E2A6BA]/40 bg-[#FFF0F5]/10 px-4 py-2 text-xs font-semibold text-[#FFF0F5] transition-colors hover:bg-[#FFF0F5]/20 disabled:opacity-50"
+              >
+                <SkipForward className="h-4 w-4" />
+                <span className="whitespace-nowrap">Bài tiếp</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onToggleShuffle}
+                aria-pressed={isShuffle}
+                className={`inline-flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-full border px-4 py-2 text-xs font-semibold transition-colors ${
+                  isShuffle
+                    ? 'border-[#FFF0F5] bg-[#E2A6BA] text-[#3A071F]'
+                    : 'border-[#E2A6BA]/40 bg-[#FFF0F5]/10 text-[#FFF0F5] hover:bg-[#FFF0F5]/20'
+                }`}
+              >
+                <Shuffle className="h-4 w-4" />
+                <span className="whitespace-nowrap">
+                  {isShuffle ? 'Ngẫu nhiên: Bật' : 'Ngẫu nhiên: Tắt'}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onToggleSfx}
+                className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-full border border-[#E2A6BA]/40 bg-[#FFF0F5]/10 px-4 py-2 text-xs font-semibold text-[#FFF0F5] transition-colors hover:bg-[#FFF0F5]/20"
+              >
+                {sfxEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
+                <span className="whitespace-nowrap">
+                  {sfxEnabled ? 'Âm chạm: Bật' : 'Âm chạm: Tắt'}
+                </span>
+              </button>
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center justify-center gap-2.5">
-            <button
-              type="button"
-              onClick={onTogglePlay}
-              className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-full bg-[#FFF0F5] px-6 py-2 text-sm font-bold text-[#3A071F] transition-transform hover:scale-[1.02]"
-            >
-              {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
-              <span className="whitespace-nowrap">{isPlaying ? 'Tạm dừng' : 'Phát nhạc'}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={onNextTrack}
-              disabled={tracks.length === 0}
-              className="inline-flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-full border border-[#E2A6BA]/40 bg-[#FFF0F5]/10 px-4 py-2 text-xs font-semibold text-[#FFF0F5] transition-colors hover:bg-[#FFF0F5]/20 disabled:opacity-50"
-            >
-              <SkipForward className="h-4 w-4" />
-              <span className="whitespace-nowrap">Bài tiếp</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={onToggleShuffle}
-              aria-pressed={isShuffle}
-              className={`inline-flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-full border px-4 py-2 text-xs font-semibold transition-colors ${
-                isShuffle
-                  ? 'border-[#FFF0F5] bg-[#E2A6BA] text-[#3A071F]'
-                  : 'border-[#E2A6BA]/40 bg-[#FFF0F5]/10 text-[#FFF0F5] hover:bg-[#FFF0F5]/20'
-              }`}
-            >
-              <Shuffle className="h-4 w-4" />
-              <span className="whitespace-nowrap">
-                {isShuffle ? 'Ngẫu nhiên: Bật' : 'Ngẫu nhiên: Tắt'}
+          {/* Thanh kéo thời gian cho nhạc (Seek Bar) */}
+          <div className="w-full rounded-2xl bg-black/15 px-4 py-2.5 backdrop-blur-sm">
+            <div className="flex items-center gap-3">
+              <span className="min-w-[34px] text-[11px] font-bold text-[#E2A6BA] tabular-nums">
+                {formatTime(currentTime)}
               </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={onToggleSfx}
-              className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-full border border-[#E2A6BA]/40 bg-[#FFF0F5]/10 px-4 py-2 text-xs font-semibold text-[#FFF0F5] transition-colors hover:bg-[#FFF0F5]/20"
-            >
-              {sfxEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-              <span className="whitespace-nowrap">
-                {sfxEnabled ? 'Âm chạm: Bật' : 'Âm chạm: Tắt'}
+              <input
+                type="range"
+                min={0}
+                max={duration > 0 ? duration : 100}
+                step={0.5}
+                value={duration > 0 ? currentTime : 0}
+                disabled={duration <= 0}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value);
+                  setCurrentTime(val);
+                  soundEngine.seek(val);
+                }}
+                aria-label="Thanh kéo thời gian bài nhạc"
+                className="h-2 w-full cursor-pointer accent-[#E2A6BA] disabled:opacity-30"
+              />
+              <span className="min-w-[34px] text-right text-[11px] font-bold text-[#E2A6BA] tabular-nums">
+                {duration > 0 ? formatTime(duration) : activeTrack.durationLabel || '0:00'}
               </span>
-            </button>
+            </div>
           </div>
         </div>
       )}
-
-      {/* Volume control */}
-      <div className="mb-6 flex items-center justify-between gap-4 rounded-2xl border border-[#B65A7C]/20 bg-[#FFF0F5]/85 px-5 py-3.5 backdrop-blur-sm">
-        <span className="text-xs font-semibold text-[#6F1F3B] whitespace-nowrap">
-          Âm lượng nhạc nền
-        </span>
-        <input
-          type="range"
-          min={0}
-          max={1}
-          step={0.02}
-          value={volume}
-          onChange={(e) => onChangeVolume(parseFloat(e.target.value))}
-          aria-label="Âm lượng nhạc nền"
-          className="h-2 w-full max-w-xs cursor-pointer accent-[#6F1F3B]"
-        />
-        <span className="w-10 text-right text-xs font-bold text-[#3A071F] tabular-nums">
-          {Math.round(volume * 100)}%
-        </span>
-      </div>
 
       {/* Playlist */}
       {tracks.length === 0 ? (
@@ -185,9 +210,11 @@ export const MusicPage: React.FC<MusicPageProps> = ({
                     </span>
                     <div className="min-w-0">
                       <p className="truncate font-semibold text-[#3A071F]">{track.title}</p>
-                      <p className="truncate text-xs text-[#6F1F3B]/80">
-                        {track.artist}
-                      </p>
+                      {Boolean(track.artist && track.artist.trim()) && (
+                        <p className="truncate text-xs text-[#6F1F3B]/80">
+                          {track.artist}
+                        </p>
+                      )}
                     </div>
                   </div>
                   <span className="shrink-0 text-xs font-semibold text-[#B65A7C]">

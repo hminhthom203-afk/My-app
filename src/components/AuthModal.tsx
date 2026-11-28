@@ -2,12 +2,14 @@ import React, { useEffect, useState } from 'react';
 import {
   createUserWithEmailAndPassword,
   sendEmailVerification,
+  sendPasswordResetEmail,
+  confirmPasswordReset,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
   updateProfile,
 } from 'firebase/auth';
-import { Eye, EyeOff, MailCheck, RefreshCw, LogOut, X } from 'lucide-react';
+import { Eye, EyeOff, MailCheck, RefreshCw, LogOut, X, ArrowLeft, KeyRound } from 'lucide-react';
 import { auth, googleProvider } from '../firebase';
 import { UserProfile } from '../types';
 
@@ -24,13 +26,17 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onRefreshAuth,
   onClose,
 }) => {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [mode, setMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [resetCode, setResetCode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [suggestRegister, setSuggestRegister] = useState(false);
   const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const [resetEmailSent, setResetEmailSent] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [busy, setBusy] = useState(false);
@@ -38,7 +44,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
     setError('');
+    setInfo('');
     setSuggestRegister(false);
+    setResetEmailSent(false);
+
+    // Check if URL has oobCode for password reset
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const code = params.get('oobCode');
+      const action = params.get('mode');
+      if (code && action === 'resetPassword') {
+        setResetCode(code);
+        setMode('forgot');
+        setResetEmailSent(true);
+      }
+    }
+
     if (currentUser && !currentUser.emailVerified) {
       setAwaitingVerification(true);
       setInfo(
@@ -46,7 +67,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       );
     } else {
       setAwaitingVerification(false);
-      setInfo('');
     }
   }, [isOpen, currentUser]);
 
@@ -131,11 +151,70 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         setError('Gmail này đã đăng ký bằng mật khẩu trước đó. Vui lòng đăng nhập bằng Gmail và mật khẩu.');
       } else {
         setError(
-          `Không thể đăng nhập bằng Google lúc này${code ? ` (${code})` : ''}. Bạn có thể thử trình duyệt Chrome hoặc đăng ký bằng Gmail + mật khẩu bên trên.`
+          `Không thể đăng nhập bằng Google lúc này${code ? ` (${code})` : ''}. Bạn có thể thử Chrome hoặc đăng ký bằng Gmail + mật khẩu bên trên.`
         );
       }
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleSendResetLink = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = email.trim();
+    if (!cleanEmail) {
+      setError('Vui lòng nhập Gmail của bạn.');
+      return;
+    }
+    setError('');
+    setInfo('');
+    setBusy(true);
+    try {
+      await sendPasswordResetEmail(auth, cleanEmail);
+      setResetEmailSent(true);
+      setInfo(`Đã gửi liên kết xác nhận đổi mật khẩu tới ${cleanEmail}. Vui lòng mở Gmail (kiểm tra cả hộp thư Spam/Thư rác) bấm vào liên kết để xác nhận.`);
+    } catch (err) {
+      const code = (err as { code?: string })?.code || '';
+      if (code === 'auth/user-not-found') {
+        setError('Gmail này chưa được đăng ký trong hệ thống.');
+      } else {
+        setError('Không thể gửi liên kết đặt lại mật khẩu lúc này. Vui lòng kiểm tra lại Gmail.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleConfirmNewPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setInfo('');
+    if (!newPassword || newPassword.length < 6) {
+      setError('Mật khẩu mới cần ít nhất 6 ký tự.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setError('Mật khẩu xác nhận không khớp với mật khẩu mới.');
+      return;
+    }
+
+    if (resetCode) {
+      setBusy(true);
+      try {
+        await confirmPasswordReset(auth, resetCode, newPassword);
+        setInfo('Đặt lại mật khẩu thành công! Vui lòng đăng nhập bằng mật khẩu mới.');
+        setMode('login');
+        setPassword(newPassword);
+        setNewPassword('');
+        setConfirmPassword('');
+        setResetCode('');
+      } catch {
+        setError('Mã xác nhận không hợp lệ hoặc đã hết hạn. Vui lòng gửi lại yêu cầu quên mật khẩu.');
+      } finally {
+        setBusy(false);
+      }
+    } else {
+      setInfo('Vui lòng mở liên kết đã gửi tới Gmail của bạn để xác nhận và lưu mật khẩu mới.');
     }
   };
 
@@ -227,7 +306,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
             ? 'Xác Minh Gmail'
             : mode === 'login'
               ? 'Đăng Nhập'
-              : 'Đăng Ký Tài Khoản'}
+              : mode === 'register'
+                ? 'Đăng Ký Tài Khoản'
+                : 'Quên Mật Khẩu'}
         </h2>
 
         {awaitingVerification ? (
@@ -285,6 +366,103 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </button>
             </div>
           </div>
+        ) : mode === 'forgot' ? (
+          <div className="space-y-4">
+            <p className="text-xs text-[#6F1F3B]/90">
+              Nhập Gmail tài khoản của bạn. Chúng tôi sẽ gửi liên kết xác nhận để bạn đặt lại mật khẩu mới.
+            </p>
+
+            {!resetEmailSent ? (
+              <form onSubmit={handleSendResetLink} className="space-y-3.5">
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">Gmail của bạn</label>
+                  <input
+                    type="email"
+                    required
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="example@gmail.com"
+                    className="min-h-[44px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3.5 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
+                  />
+                </div>
+
+                {error && (
+                  <div className="rounded-xl bg-[#6F1F3B]/10 px-3 py-2 text-xs font-semibold text-[#6F1F3B]">
+                    {error}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="min-h-[44px] w-full cursor-pointer rounded-full bg-[#6F1F3B] px-5 py-2.5 text-sm font-bold text-[#FFF0F5] transition-colors hover:bg-[#3A071F] disabled:opacity-60"
+                >
+                  {busy ? 'Đang gửi...' : 'Gửi liên kết xác nhận Gmail'}
+                </button>
+              </form>
+            ) : (
+              <form onSubmit={handleConfirmNewPassword} className="space-y-3.5">
+                {info && (
+                  <div className="rounded-xl bg-[#E2A6BA]/35 p-3 text-xs font-semibold text-[#3A071F]">
+                    {info}
+                  </div>
+                )}
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">Mật khẩu mới</label>
+                  <input
+                    type="password"
+                    required
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Tối thiểu 6 ký tự"
+                    className="min-h-[44px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3.5 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">Xác nhận mật khẩu mới</label>
+                  <input
+                    type="password"
+                    required
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Nhập lại mật khẩu mới"
+                    className="min-h-[44px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3.5 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
+                  />
+                </div>
+
+                {error && (
+                  <div className="rounded-xl bg-[#6F1F3B]/10 px-3 py-2 text-xs font-semibold text-[#6F1F3B]">
+                    {error}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={busy}
+                  className="min-h-[44px] w-full cursor-pointer rounded-full bg-[#6F1F3B] px-5 py-2.5 text-sm font-bold text-[#FFF0F5] transition-colors hover:bg-[#3A071F] disabled:opacity-60"
+                >
+                  {busy ? 'Đang cập nhật...' : 'Xác nhận đổi mật khẩu mới'}
+                </button>
+              </form>
+            )}
+
+            <div className="pt-2 text-center">
+              <button
+                type="button"
+                onClick={() => {
+                  setError('');
+                  setInfo('');
+                  setMode('login');
+                }}
+                className="inline-flex items-center gap-1 cursor-pointer text-xs font-semibold text-[#6F1F3B] underline underline-offset-4 hover:text-[#3A071F]"
+              >
+                <ArrowLeft className="h-3.5 w-3.5" />
+                <span>Quay lại Đăng nhập</span>
+              </button>
+            </div>
+          </div>
         ) : (
           <>
             <form onSubmit={handleEmailAuth} className="space-y-3.5">
@@ -317,7 +495,22 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </div>
 
               <div>
-                <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">Mật khẩu</label>
+                <div className="mb-1 flex items-center justify-between">
+                  <label className="block text-xs font-semibold text-[#6F1F3B]">Mật khẩu</label>
+                  {mode === 'login' && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setError('');
+                        setInfo('');
+                        setMode('forgot');
+                      }}
+                      className="cursor-pointer text-[11px] font-semibold text-[#6F1F3B] hover:underline"
+                    >
+                      Quên mật khẩu?
+                    </button>
+                  )}
+                </div>
                 <div className="relative flex items-center">
                   <input
                     type={showPassword ? 'text' : 'password'}

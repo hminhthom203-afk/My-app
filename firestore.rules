@@ -89,7 +89,7 @@ service cloud.firestore {
         'title', 'artist', 'mood', 'durationLabel', 'audioUrl', 'synthPreset', 'createdAt', 'updatedAt'
       ])
       && data.title is string && data.title.size() >= 1 && data.title.size() <= 100
-      && data.artist is string && data.artist.size() >= 1 && data.artist.size() <= 100
+      && data.artist is string && data.artist.size() <= 100
       && data.mood is string && data.mood.size() >= 1 && data.mood.size() <= 100
       && data.durationLabel is string && data.durationLabel.size() >= 1 && data.durationLabel.size() <= 50
       && data.audioUrl is string && data.audioUrl.size() <= 500
@@ -121,8 +121,7 @@ service cloud.firestore {
       && data.characterName is string && data.characterName.size() >= 1 && data.characterName.size() <= 80
       && data.actorUid is string && data.actorUid.size() >= 1 && data.actorUid.size() <= 128
       && data.actorName is string && data.actorName.size() >= 1 && data.actorName.size() <= 80
-      && data.message is string && data.message.size() >= 1 && data.message.size() <= 600
-      && data.recipientEmail is string && data.recipientEmail == 'hminhthom203@gmail.com'
+      && data.recipientEmail is string && data.recipientEmail.size() >= 3 && data.recipientEmail.size() <= 160
       && data.emailStatus in ['sent', 'queued', 'not_configured']
       && data.read is bool
       && data.createdAt is timestamp;
@@ -333,10 +332,12 @@ service cloud.firestore {
       }
     }
 
-    // Admin Notifications
+    // Notifications (Admin + Viewer notifications for replies / interactions)
     match /notifications/{notifId} {
-      allow get: if isAdmin() && isValidId(notifId);
-      allow list: if isAdmin();
+      allow get: if isVerifiedSignedIn()
+        && isValidId(notifId)
+        && (isAdmin() || resource.data.recipientEmail == request.auth.token.email);
+      allow list: if isVerifiedSignedIn();
 
       allow create: if isVerifiedSignedIn()
         && isValidId(notifId)
@@ -346,9 +347,10 @@ service cloud.firestore {
         && incoming().createdAt == request.time
         && exists(/databases/$(database)/documents/characters/$(incoming().characterId));
 
-      allow update: if isAdmin()
+      allow update: if isVerifiedSignedIn()
         && isValidId(notifId)
         && isValidNotification(incoming())
+        && (isAdmin() || existing().recipientEmail == request.auth.token.email)
         && incoming().diff(existing()).affectedKeys().hasOnly(['read', 'emailStatus'])
         && incoming().type == existing().type
         && incoming().characterId == existing().characterId
@@ -364,8 +366,10 @@ service cloud.firestore {
         || (
           isVerifiedSignedIn()
           && resource != null
-          && existing().type == 'like'
-          && existing().actorUid == request.auth.uid
+          && (
+            existing().recipientEmail == request.auth.token.email
+            || (existing().type == 'like' && existing().actorUid == request.auth.uid)
+          )
         )
       );
     }

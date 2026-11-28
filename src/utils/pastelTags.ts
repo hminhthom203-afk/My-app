@@ -6,7 +6,7 @@ export const PASTEL_TAG_CLASSES = [
 ] as const;
 
 export const SLOGAN_BOX_CLASS =
-  'bg-[#FFF3C4]/95 text-[#5C4308] border-[1.5px] border-white shadow-[0_0_8px_rgba(255,255,255,0.98),0_0_14px_rgba(255,255,255,0.7),0_2px_6px_rgba(92,67,8,0.12)]';
+  'bg-[#FFE4EF]/95 text-[#6F1F3B] font-semibold border-[1.5px] border-white shadow-[0_0_10px_rgba(255,255,255,0.9),0_3px_10px_-3px_rgba(111,31,59,0.12)]';
 
 export function getPastelTagClass(index: number): string {
   return PASTEL_TAG_CLASSES[index % PASTEL_TAG_CLASSES.length];

@@ -12,6 +12,7 @@ import {
   BookOpen,
   ShoppingBag,
   ChevronDown,
+  Reply,
 } from 'lucide-react';
 import { Character, CharacterComment, UserProfile } from '../types';
 import { AvatarFrame } from './AvatarFrame';
@@ -26,7 +27,7 @@ interface CharacterDetailPageProps {
   currentUser: UserProfile | null;
   onBack: () => void;
   onToggleLike: (characterId: string) => void;
-  onAddComment: (characterId: string, content: string) => Promise<boolean>;
+  onAddComment: (characterId: string, content: string, replyToAuthorUid?: string) => Promise<boolean>;
   onUpdateComment: (characterId: string, commentId: string, content: string) => Promise<void>;
   onDeleteComment: (characterId: string, commentId: string) => Promise<void>;
   onRequestAuth: () => void;
@@ -48,6 +49,7 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
 }) => {
   const [commentText, setCommentText] = useState('');
   const [submitting, setSubmitting] = useState(false);
+  const [replyToAuthorUid, setReplyToAuthorUid] = useState<string | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingText, setEditingText] = useState('');
   const [authNotice, setAuthNotice] = useState<string | null>(null);
@@ -66,9 +68,10 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
     if (!trimmed || submitting) return;
     setSubmitting(true);
     try {
-      const ok = await onAddComment(character.id, trimmed);
+      const ok = await onAddComment(character.id, trimmed, replyToAuthorUid || undefined);
       if (ok) {
         setCommentText('');
+        setReplyToAuthorUid(null);
         setAuthNotice(null);
       }
     } finally {
@@ -164,7 +167,7 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
               </div>
             )}
 
-            <p className={`mb-6 rounded-2xl px-5 py-3.5 text-base font-semibold italic ${SLOGAN_BOX_CLASS}`}>
+            <p className={`mb-6 rounded-2xl px-3.5 py-2 text-xs leading-relaxed font-semibold italic ${SLOGAN_BOX_CLASS}`}>
               “{character.slogan}”
             </p>
 
@@ -199,7 +202,7 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
       </div>
 
       {/* Messages / Comments Section */}
-      <section className="mt-8 rounded-3xl border border-white/60 bg-[#FFF0F5]/10 p-6 shadow-[0_0_14px_rgba(255,255,255,0.6)] backdrop-blur-sm sm:p-8">
+      <section id="comments-section" className="mt-8 rounded-3xl border border-white/60 bg-[#FFF0F5]/10 p-6 shadow-[0_0_14px_rgba(255,255,255,0.6)] backdrop-blur-sm sm:p-8">
         <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
           <h2 className="font-cute inline-flex flex-wrap items-center gap-2 rounded-2xl border border-[#FDA4AF] bg-[#FFE4E6]/85 px-4 py-2 text-lg font-bold text-[#9F1239] shadow-[0_0_10px_rgba(255,255,255,0.85)] sm:text-xl">
             <MessageCircle className="h-5 w-5 text-[#E11D48]" />
@@ -250,9 +253,15 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
 
         <form onSubmit={handleSubmitComment} className="mb-6 flex flex-col gap-3 sm:flex-row">
           <input
+            id="comment-input"
             type="text"
             value={commentText}
-            onChange={(e) => setCommentText(e.target.value)}
+            onChange={(e) => {
+              setCommentText(e.target.value);
+              if (!e.target.value.includes('@')) {
+                setReplyToAuthorUid(null);
+              }
+            }}
             maxLength={500}
             placeholder={
               currentUser
@@ -326,7 +335,24 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
                         </div>
 
                         {!isEditing ? (
-                          <p className="break-words text-sm text-[#3A071F]/90">{cmt.content}</p>
+                          <>
+                            <p className="break-words text-sm text-[#3A071F]/90">{cmt.content}</p>
+                            {currentUser && currentUser.uid !== cmt.authorUid && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setCommentText(`@${cmt.authorName} `);
+                                  setReplyToAuthorUid(cmt.authorUid);
+                                  const inputEl = document.getElementById('comment-input');
+                                  if (inputEl) inputEl.focus();
+                                }}
+                                className="mt-1.5 inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-semibold text-[#8C1B4A] hover:bg-[#FFE4E6] hover:text-[#9F1239] transition-colors"
+                              >
+                                <Reply className="h-3 w-3" />
+                                <span>Trả lời</span>
+                              </button>
+                            )}
+                          </>
                         ) : (
                           <div className="mt-2 flex flex-col gap-2 sm:flex-row">
                             <input

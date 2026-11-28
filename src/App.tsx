@@ -15,6 +15,7 @@ import {
   setDoc,
   Timestamp,
   updateDoc,
+  where,
   writeBatch,
 } from 'firebase/firestore';
 import {
@@ -29,6 +30,7 @@ import {
   MailWarning,
   MessageCircle,
   Crown,
+  Bell,
 } from 'lucide-react';
 import {
   AdminNotification,
@@ -53,6 +55,7 @@ import { MusicPage } from './components/MusicPage';
 import { MusicDock } from './components/MusicDock';
 import { AdminPage } from './components/AdminPage';
 import { AuthModal } from './components/AuthModal';
+import { NotificationModal } from './components/NotificationModal';
 
 function tsToIso(val: unknown): string {
   if (val instanceof Timestamp) {
@@ -98,18 +101,18 @@ export default function App() {
 
   const [searchQuery, setSearchQuery] = useState('');
   const [activeHashtag, setActiveHashtag] = useState<string>('all');
+  const [notifModalOpen, setNotifModalOpen] = useState(false);
 
   const [currentTrackId, setCurrentTrackId] = useState<string>('');
   const [isPlayingMusic, setIsPlayingMusic] = useState(false);
-  const [isShuffle, setIsShuffle] = useState(false);
-  const [musicVolume, setMusicVolume] = useState(0.45);
+  const [isShuffle, setIsShuffle] = useState(true);
   const [sfxEnabled, setSfxEnabled] = useState(true);
   const [hasAutoStarted, setHasAutoStarted] = useState(false);
 
   const cleanedSampleTracksRef = useRef(false);
   const tracksRef = useRef<MusicTrack[]>([]);
   const currentTrackIdRef = useRef<string>('');
-  const isShuffleRef = useRef<boolean>(false);
+  const isShuffleRef = useRef<boolean>(true);
   const navScrollRef = useRef<HTMLElement | null>(null);
   const navDragRef = useRef({
     isDown: false,
@@ -273,13 +276,20 @@ export default function App() {
     return () => unsub();
   }, []);
 
-  // 4. Listen to Admin Notifications when signed in as Admin
+  // 4. Listen to Notifications (Admin gets all, signed-in users get notifications directed to them)
   useEffect(() => {
-    if (currentUser?.role !== 'admin') {
+    if (!currentUser) {
       setNotifications([]);
       return;
     }
-    const q = query(collection(db, 'notifications'), orderBy('createdAt', 'desc'));
+    const q =
+      currentUser.role === 'admin'
+        ? query(collection(db, 'notifications'), orderBy('createdAt', 'desc'))
+        : query(
+            collection(db, 'notifications'),
+            where('recipientEmail', '==', currentUser.email)
+          );
+
     const unsub = onSnapshot(
       q,
       (snap) => {
@@ -293,13 +303,18 @@ export default function App() {
             actorUid: String(data.actorUid || ''),
             actorName: String(data.actorName || ''),
             message: String(data.message || ''),
-            recipientEmail: String(data.recipientEmail || ADMIN_EMAIL),
+            recipientEmail: String(data.recipientEmail || ''),
             emailStatus:
               (data.emailStatus as AdminNotification['emailStatus']) || 'not_configured',
             read: Boolean(data.read),
             createdAt: tsToIso(data.createdAt),
           };
         });
+
+        // Sort descending by time
+        list.sort(
+          (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+        );
         setNotifications(list);
       },
       (err) => {
@@ -557,14 +572,16 @@ export default function App() {
   }, [characters, searchQuery, activeHashtag]);
 
   const topCharacters = useMemo(() => {
-    return [...characters]
-      .sort((a, b) => {
-        const diffLikes = (b.likesCount ?? 0) - (a.likesCount ?? 0);
-        if (diffLikes !== 0) return diffLikes;
-        return (b.viewsCount ?? 0) - (a.viewsCount ?? 0);
-      })
-      .slice(0, 5);
-  }, [characters]);
+    return [...characters].sort((a, b) => {
+      const diffLikes = (b.likesCount ?? 0) - (a.likesCount ?? 0);
+      if (diffLikes !== 0) return diffLikes;
+      const diffViews = (b.viewsCount ?? 0) - (a.viewsCount ?? 0);
+      if (diffViews !== 0) return diffViews;
+      const diffComments = (commentCounts[b.id] ?? 0) - (commentCounts[a.id] ?? 0);
+      if (diffComments !== 0) return diffComments;
+      return a.name.localeCompare(b.name, 'vi');
+    });
+  }, [characters, commentCounts]);
 
   const likedCharacters = useMemo(() => {
     return characters.filter((c) => likedIds.has(c.id));
@@ -745,11 +762,6 @@ export default function App() {
     setIsShuffle((prev) => !prev);
   };
 
-  const handleChangeVolume = (val: number) => {
-    setMusicVolume(val);
-    soundEngine.setVolume(val);
-  };
-
   const handleToggleSfx = () => {
     const next = !sfxEnabled;
     setSfxEnabled(next);
@@ -821,7 +833,11 @@ export default function App() {
     }
   };
 
-  const handleAddComment = async (charId: string, content: string): Promise<boolean> => {
+  const handleAddComment = async (
+    charId: string,
+    content: string,
+    replyToAuthorUid?: string
+  ): Promise<boolean> => {
     if (!currentUser || !currentUser.emailVerified) {
       setAuthModalOpen(true);
       return false;
@@ -842,6 +858,34 @@ export default function App() {
       soundEngine.playSuccess();
       if (targetChar) {
         void notifyAdmin('comment', targetChar, content);
+
+        // If this is a reply to another user, also notify that user
+        if (replyToAuthorUid && replyToAuthorUid !== currentUser.uid) {
+          try {
+            const userSnap = await getDoc(doc(db, 'users', replyToAuthorUid));
+            if (userSnap.exists()) {
+              const userData = userSnap.data();
+              const recipientEmail = userData?.email;
+              if (recipientEmail && typeof recipientEmail === 'string') {
+                const userNotifId = `notif-user-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+                await setDoc(doc(db, 'notifications', userNotifId), {
+                  type: 'comment',
+                  characterId: targetChar.id,
+                  characterName: targetChar.name.slice(0, 80),
+                  actorUid: currentUser.uid,
+                  actorName: currentUser.name.slice(0, 80),
+                  message: `${currentUser.name} đã trả lời bình luận của bạn: "${content.slice(0, 100)}"`,
+                  recipientEmail,
+                  emailStatus: 'not_configured',
+                  read: false,
+                  createdAt: serverTimestamp(),
+                });
+              }
+            }
+          } catch {
+            // Ignore optional recipient notification error
+          }
+        }
       }
       return true;
     } catch (err) {
@@ -1241,18 +1285,15 @@ export default function App() {
 
   return (
     <div className="relative min-h-screen w-full max-w-full overflow-x-clip bg-[#FFF5F8] text-[#3A071F]">
-      <div
-        aria-hidden="true"
-        className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-[#FFF5F8]"
-      >
+      <div aria-hidden="true" className="fixed-rabbit-bg select-none">
         <img
           src="/assets/aistudio/b112e43a638cdf3ea1d624c6fe5f0842_3ae26b1b.jpg"
           alt="Nền hoàng hôn thỏ hồng"
-          className="h-full w-full object-cover object-center opacity-40"
+          className="pointer-events-none h-full w-full object-cover object-center opacity-40 select-none"
         />
       </div>
 
-      <header className="sticky top-0 z-30 bg-transparent">
+      <header className="relative z-30 bg-transparent">
         <div className="relative z-10 mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 pt-3 pb-0 sm:gap-6 sm:px-6">
           <button
             type="button"
@@ -1266,6 +1307,29 @@ export default function App() {
           </button>
 
           <div className="flex shrink-0 items-center gap-2">
+            {/* Nút thông báo nằm cạnh nút Đăng nhập / Đăng xuất, cùng hàng và màu pastel */}
+            <button
+              type="button"
+              onClick={() => {
+                soundEngine.playChime();
+                setNotifModalOpen(true);
+              }}
+              title="Thông báo tương tác"
+              aria-label={`Thông báo (${unreadNotificationsCount} chưa đọc)`}
+              className="relative inline-flex min-h-[38px] cursor-pointer items-center justify-center gap-1.5 rounded-full border border-white/95 bg-[#FFD6E6]/55 px-3 py-1.5 text-xs font-bold text-[#7A1840] shadow-[0_0_12px_rgba(255,255,255,0.85)] transition-all whitespace-nowrap shrink-0 hover:border-white hover:bg-[#FFD6E6]/75"
+            >
+              <Bell
+                className={`h-4 w-4 ${
+                  unreadNotificationsCount > 0 ? 'text-[#E11D48] animate-bounce' : 'text-[#7A1840]'
+                }`}
+              />
+              {unreadNotificationsCount > 0 && (
+                <span className="inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#E11D48] px-1 text-[10px] font-black leading-none text-white shadow-[0_0_8px_rgba(225,29,72,0.9)] animate-pulse">
+                  !
+                </span>
+              )}
+            </button>
+
             {currentUser ? (
               <div className="flex items-center gap-2">
                 {!currentUser.emailVerified && (
@@ -1484,14 +1548,14 @@ export default function App() {
                 />
               </div>
 
-              <div className="flex flex-wrap items-center gap-1.5">
+              <div className="flex min-w-0 flex-1 flex-nowrap items-center gap-1.5 overflow-x-auto py-1 whitespace-nowrap scrollbar-none select-none">
                 <button
                   type="button"
                   onClick={() => {
                     soundEngine.playChime();
                     setActiveHashtag('all');
                   }}
-                  className={`min-h-[38px] cursor-pointer rounded-full border px-3.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap ${
+                  className={`min-h-[38px] shrink-0 cursor-pointer rounded-full border px-3.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap ${
                     activeHashtag === 'all'
                       ? 'border-[#DDD6FE] bg-[#EDE9FE] text-[#5B21B6] shadow-sm'
                       : 'border-transparent bg-white/75 text-[#6F1F3B] hover:bg-white'
@@ -1507,7 +1571,7 @@ export default function App() {
                       soundEngine.playChime();
                       setActiveHashtag(tag);
                     }}
-                    className={`min-h-[38px] cursor-pointer rounded-full border px-3.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap ${
+                    className={`min-h-[38px] shrink-0 cursor-pointer rounded-full border px-3.5 py-1 text-xs font-semibold transition-colors whitespace-nowrap ${
                       activeHashtag === tag
                         ? 'border-[#DDD6FE] bg-[#EDE9FE] text-[#5B21B6] shadow-sm'
                         : 'border-transparent bg-white/75 text-[#6F1F3B] hover:bg-white'
@@ -1562,7 +1626,7 @@ export default function App() {
 
                           {char.hashtags.length > 0 && (
                             <div className="mb-3 flex flex-wrap items-center justify-center gap-1.5">
-                              {char.hashtags.slice(0, 3).map((tag, idx) => (
+                              {char.hashtags.map((tag, idx) => (
                                 <span
                                   key={tag}
                                   className={`inline-flex items-center rounded-full border-[1.5px] border-white px-2.5 py-0.5 text-[11px] font-bold shadow-[0_0_8px_rgba(255,255,255,0.98),0_0_14px_rgba(255,255,255,0.75),0_2px_6px_rgba(40,60,90,0.12)] ${getPastelTagClass(
@@ -1578,7 +1642,7 @@ export default function App() {
                           <p
                             className={`mb-4 w-full rounded-2xl px-3.5 py-2 text-xs leading-relaxed font-semibold ${SLOGAN_BOX_CLASS}`}
                           >
-                            <span className="line-clamp-2">“{char.slogan}”</span>
+                            <span>“{char.slogan}”</span>
                           </p>
 
                           <div
@@ -1685,17 +1749,25 @@ export default function App() {
                         {/* Rank Badge */}
                         <div className="absolute top-3 left-3 z-10">
                           <span
-                            className={`inline-flex items-center gap-1 rounded-full border border-white/80 px-3 py-1 text-xs font-black shadow-md ${
+                            className={`inline-flex items-center gap-1 rounded-full border border-white/90 px-3 py-1 text-xs font-black shadow-md ${
                               rank === 1
-                                ? 'bg-gradient-to-r from-amber-400 via-rose-300 to-amber-500 text-[#3A071F]'
+                                ? 'bg-gradient-to-r from-[#FEF08A] via-[#FDE047] to-[#F59E0B] text-[#78350F]'
                                 : rank === 2
-                                ? 'bg-gradient-to-r from-slate-200 to-slate-300 text-[#3A071F]'
+                                ? 'bg-gradient-to-r from-[#F8FAFC] via-[#E2E8F0] to-[#CBD5E1] text-[#334155]'
                                 : rank === 3
-                                ? 'bg-gradient-to-r from-amber-600 to-amber-700 text-white'
+                                ? 'bg-gradient-to-r from-[#FED7AA] via-[#FDBA74] to-[#FB923C] text-[#7C2D12]'
                                 : 'bg-white/90 text-[#6F1F3B]'
                             }`}
                           >
-                            {rank === 1 && <Crown className="h-3.5 w-3.5 fill-[#3A071F] text-[#3A071F]" />}
+                            {rank === 1 && (
+                              <Crown className="h-3.5 w-3.5 fill-[#CA8A04] text-[#78350F]" />
+                            )}
+                            {rank === 2 && (
+                              <Crown className="h-3.5 w-3.5 fill-[#94A3B8] text-[#334155]" />
+                            )}
+                            {rank === 3 && (
+                              <Crown className="h-3.5 w-3.5 fill-[#EA580C] text-[#7C2D12]" />
+                            )}
                             <span>#{rank}</span>
                           </span>
                         </div>
@@ -1719,7 +1791,7 @@ export default function App() {
 
                           {char.hashtags.length > 0 && (
                             <div className="mb-3 flex flex-wrap items-center justify-center gap-1.5">
-                              {char.hashtags.slice(0, 3).map((tag, idx) => (
+                              {char.hashtags.map((tag, idx) => (
                                 <span
                                   key={tag}
                                   className={`inline-flex items-center rounded-full border-[1.5px] border-white px-2.5 py-0.5 text-[11px] font-bold shadow-[0_0_8px_rgba(255,255,255,0.98),0_0_14px_rgba(255,255,255,0.75),0_2px_6px_rgba(40,60,90,0.12)] ${getPastelTagClass(
@@ -1735,7 +1807,7 @@ export default function App() {
                           <p
                             className={`mb-4 w-full rounded-2xl px-3.5 py-2 text-xs leading-relaxed font-semibold ${SLOGAN_BOX_CLASS}`}
                           >
-                            <span className="line-clamp-2">“{char.slogan}”</span>
+                            <span>“{char.slogan}”</span>
                           </p>
 
                           <div
@@ -1882,7 +1954,7 @@ export default function App() {
 
                           {char.hashtags.length > 0 && (
                             <div className="mb-3 flex flex-wrap items-center justify-center gap-1.5">
-                              {char.hashtags.slice(0, 3).map((tag, idx) => (
+                              {char.hashtags.map((tag, idx) => (
                                 <span
                                   key={tag}
                                   className={`inline-flex items-center rounded-full border-[1.5px] border-white px-2.5 py-0.5 text-[11px] font-bold shadow-[0_0_8px_rgba(255,255,255,0.98),0_0_14px_rgba(255,255,255,0.75),0_2px_6px_rgba(40,60,90,0.12)] ${getPastelTagClass(
@@ -1898,7 +1970,7 @@ export default function App() {
                           <p
                             className={`mb-4 w-full rounded-2xl px-3.5 py-2 text-xs leading-relaxed font-semibold ${SLOGAN_BOX_CLASS}`}
                           >
-                            <span className="line-clamp-2">“{char.slogan}”</span>
+                            <span>“{char.slogan}”</span>
                           </p>
 
                           <div
@@ -1995,13 +2067,11 @@ export default function App() {
             currentTrackId={currentTrackId}
             isPlaying={isPlayingMusic}
             isShuffle={isShuffle}
-            volume={musicVolume}
             sfxEnabled={sfxEnabled}
             onSelectTrack={handleSelectTrack}
             onTogglePlay={handleTogglePlay}
             onNextTrack={handleNextTrack}
             onToggleShuffle={handleToggleShuffle}
-            onChangeVolume={handleChangeVolume}
             onToggleSfx={handleToggleSfx}
             onPlayHoverSound={() => soundEngine.playHoverTick()}
           />
@@ -2044,6 +2114,25 @@ export default function App() {
           void syncFirebaseUser(auth.currentUser);
         }}
         onClose={() => setAuthModalOpen(false)}
+      />
+
+      <NotificationModal
+        isOpen={notifModalOpen}
+        notifications={notifications}
+        onClose={() => setNotifModalOpen(false)}
+        onOpenCharacter={(characterId) => {
+          void handleOpenDetail(characterId);
+          setNotifModalOpen(false);
+          setTimeout(() => {
+            const el = document.getElementById('comments-section');
+            if (el) {
+              el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
+          }, 350);
+        }}
+        onMarkAllRead={handleMarkAllNotificationsRead}
+        onDeleteNotification={handleDeleteNotification}
+        onDeleteAllNotifications={handleDeleteAllNotifications}
       />
     </div>
   );

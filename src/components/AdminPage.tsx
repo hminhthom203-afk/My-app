@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import {
   Plus,
@@ -112,9 +112,10 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const [charError, setCharError] = useState<string | null>(null);
 
   // Track form state
+  const trackFormRef = useRef<HTMLFormElement | null>(null);
   const [editingTrackId, setEditingTrackId] = useState<string | null>(null);
   const [trackTitle, setTrackTitle] = useState('');
-  const [trackArtist, setTrackArtist] = useState('Hộp Nhạc Của Kẹo');
+  const [trackArtist, setTrackArtist] = useState('');
   const [trackUrl, setTrackUrl] = useState('');
   const [pendingAudioFile, setPendingAudioFile] = useState<{
     base64Chunks: string[];
@@ -231,7 +232,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const resetTrackForm = () => {
     setEditingTrackId(null);
     setTrackTitle('');
-    setTrackArtist('Hộp Nhạc Của Kẹo');
+    setTrackArtist('');
     setTrackUrl('');
     setPendingAudioFile(null);
     setExistingChunksUrl('');
@@ -242,7 +243,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const handleEditTrack = (t: MusicTrack) => {
     setEditingTrackId(t.id);
     setTrackTitle(t.title);
-    setTrackArtist(t.artist);
+    setTrackArtist(t.artist || '');
     if (t.audioUrl && t.audioUrl.startsWith('chunks:')) {
       setExistingChunksUrl(t.audioUrl);
       setTrackUrl('');
@@ -253,6 +254,13 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     setPendingAudioFile(null);
     setTrackError(null);
     setUploadProgress(null);
+    setTimeout(() => {
+      if (trackFormRef.current) {
+        trackFormRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }, 30);
   };
 
   const handleAudioFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -286,7 +294,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       await onSaveTrack({
         id: editingTrackId || undefined,
         title: trackTitle.trim().slice(0, 100),
-        artist: trackArtist.trim().slice(0, 100) || 'Hộp Nhạc Của Kẹo',
+        artist: trackArtist.trim().slice(0, 100),
         mood: 'Nhạc nền',
         durationLabel: hasAudioSource ? 'Nhạc đã tải' : 'Vòng lặp êm ái',
         audioUrl: pendingAudioFile
@@ -692,7 +700,9 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                 className="flex items-center justify-between gap-4 rounded-2xl border border-[#B65A7C]/20 bg-[#FFF0F5]/85 p-4 shadow-sm"
               >
                 <div className="flex min-w-0 items-center gap-3.5">
-                  <AvatarFrame src={c.avatar} alt={c.name} size="sm" />
+                  <div className="h-16 w-16 shrink-0 aspect-square overflow-hidden rounded-xl">
+                    <AvatarFrame src={c.avatar} alt={c.name} size="sm" className="h-full w-full object-cover shrink-0 aspect-square" />
+                  </div>
                   <div className="min-w-0">
                     <h3 className="font-cute flex items-center gap-1.5 truncate text-base font-bold text-[#3A071F]">
                       <span className="truncate">{c.name}</span>
@@ -743,8 +753,9 @@ export const AdminPage: React.FC<AdminPageProps> = ({
       {tab === 'music' && (
         <div className="grid grid-cols-1 gap-8 lg:grid-cols-12">
           <form
+            ref={trackFormRef}
             onSubmit={handleTrackSubmit}
-            className="space-y-4 rounded-3xl border border-[#B65A7C]/25 bg-[#FFF0F5]/90 p-6 shadow-sm lg:col-span-5"
+            className="scroll-mt-4 space-y-4 rounded-3xl border border-[#B65A7C]/25 bg-[#FFF0F5]/90 p-6 shadow-sm lg:col-span-5"
           >
             <h2 className="font-cute text-lg font-bold text-[#3A071F]">
               {editingTrackId ? 'Chỉnh sửa bài nhạc' : 'Thêm nhạc mới'}
@@ -914,7 +925,9 @@ export const AdminPage: React.FC<AdminPageProps> = ({
                     <h3 className="font-cute truncate text-base font-bold text-[#3A071F]">
                       {t.title}
                     </h3>
-                    <p className="truncate text-xs text-[#6F1F3B]/80">{t.artist}</p>
+                    {Boolean(t.artist && t.artist.trim()) && (
+                      <p className="truncate text-xs text-[#6F1F3B]/80">{t.artist}</p>
+                    )}
                     {t.audioUrl && (
                       <p className="mt-0.5 truncate text-[11px] text-[#B65A7C]">
                         {t.audioUrl.startsWith('chunks:')

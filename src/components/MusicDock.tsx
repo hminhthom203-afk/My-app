@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Pause, SkipForward, Volume2, VolumeX, Shuffle } from 'lucide-react';
+import { Disc3, Music2 } from 'lucide-react';
 import { MusicTrack } from '../types';
 
 interface MusicDockProps {
@@ -17,72 +17,51 @@ interface MusicDockProps {
 export const MusicDock: React.FC<MusicDockProps> = ({
   currentTrack,
   isPlaying,
-  isShuffle,
-  sfxEnabled,
-  onTogglePlay,
-  onNextTrack,
-  onToggleShuffle,
-  onToggleSfx,
   onOpenMusicPage,
 }) => {
   if (!currentTrack) return null;
 
   return (
-    <div className="fixed right-3 bottom-3 left-3 z-40 mx-auto flex h-12 max-w-md items-center justify-between gap-2 rounded-full border border-[#B65A7C]/35 bg-[#3A071F]/92 px-3 text-[#FFF0F5] shadow-[0_10px_30px_-8px_rgba(58,7,31,0.55)] backdrop-blur-md sm:left-auto sm:right-5 sm:bottom-5 sm:w-auto sm:min-w-[340px]">
-      <button
-        type="button"
-        onClick={onTogglePlay}
-        aria-label={isPlaying ? 'Tạm dừng nhạc' : 'Phát nhạc'}
-        className="flex h-8 w-8 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#E2A6BA] text-[#3A071F] transition-transform hover:scale-105"
+    <button
+      type="button"
+      onClick={onOpenMusicPage}
+      title={`${isPlaying ? 'Đang phát' : 'Tạm dừng'}: ${currentTrack.title} — Bấm để mở Hộp Nhạc`}
+      aria-label={`${isPlaying ? 'Đang phát' : 'Tạm dừng'}: ${currentTrack.title}. Bấm để chuyển sang mục Âm Nhạc`}
+      className="group fixed right-4 bottom-4 z-40 flex h-14 w-14 cursor-pointer items-center justify-center rounded-full border-2 border-white/95 bg-gradient-to-br from-[#6F1F3B] via-[#3A071F] to-[#831843] shadow-[0_8px_24px_rgba(58,7,31,0.42),0_0_16px_rgba(255,214,230,0.85)] transition-transform duration-200 hover:scale-108 active:scale-95 sm:right-5 sm:bottom-5 sm:h-16 sm:w-16"
+    >
+      {/* Spinning vinyl disc */}
+      <span
+        className="relative flex h-full w-full items-center justify-center rounded-full animate-[spin_5s_linear_infinite]"
+        style={{
+          animationPlayState: isPlaying ? 'running' : 'paused',
+        }}
       >
-        {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4 ml-0.5" />}
-      </button>
+        {/* Subtle vinyl groove rings */}
+        <span
+          aria-hidden="true"
+          className="absolute inset-1.5 rounded-full border border-[#FFD6E6]/25"
+        />
+        <span
+          aria-hidden="true"
+          className="absolute inset-3 rounded-full border border-[#FFD6E6]/20"
+        />
+        <Disc3 className="h-7 w-7 text-[#FFD6E6] sm:h-8 sm:w-8" />
+        {/* Center pastel spindle label */}
+        <span
+          aria-hidden="true"
+          className="absolute h-3 w-3 rounded-full border border-[#6F1F3B]/50 bg-[#FFF0F5] shadow-inner"
+        />
+      </span>
 
-      <button
-        type="button"
-        onClick={onOpenMusicPage}
-        className="min-w-0 flex-1 cursor-pointer truncate px-1 text-left"
-      >
-        <span className="block truncate text-xs font-semibold text-[#FFF0F5]">
-          {currentTrack.title}
+      {/* Cute music note indicator badge when playing */}
+      {isPlaying && (
+        <span
+          aria-hidden="true"
+          className="absolute -top-1 -left-1 flex h-5 w-5 items-center justify-center rounded-full border border-white bg-[#FFE4E6] text-[#E11D48] shadow-sm animate-bounce"
+        >
+          <Music2 className="h-2.5 w-2.5" />
         </span>
-      </button>
-
-      <div className="flex shrink-0 items-center gap-1">
-        <button
-          type="button"
-          onClick={onToggleShuffle}
-          aria-pressed={isShuffle}
-          aria-label={isShuffle ? 'Tắt phát ngẫu nhiên' : 'Bật phát ngẫu nhiên'}
-          title={isShuffle ? 'Phát ngẫu nhiên: Bật' : 'Phát ngẫu nhiên: Tắt'}
-          className={`flex h-8 w-8 cursor-pointer items-center justify-center rounded-full transition-colors ${
-            isShuffle
-              ? 'bg-[#E2A6BA] text-[#3A071F]'
-              : 'text-[#E2A6BA] hover:bg-white/10 hover:text-[#FFF0F5]'
-          }`}
-        >
-          <Shuffle className="h-3.5 w-3.5" />
-        </button>
-
-        <button
-          type="button"
-          onClick={onNextTrack}
-          aria-label="Bài tiếp theo"
-          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-[#E2A6BA] transition-colors hover:bg-white/10 hover:text-[#FFF0F5]"
-        >
-          <SkipForward className="h-4 w-4" />
-        </button>
-
-        <button
-          type="button"
-          onClick={onToggleSfx}
-          aria-label={sfxEnabled ? 'Tắt âm thanh tương tác' : 'Bật âm thanh tương tác'}
-          title={sfxEnabled ? 'Âm chạm đang bật' : 'Âm chạm đang tắt'}
-          className="flex h-8 w-8 cursor-pointer items-center justify-center rounded-full text-[#E2A6BA] transition-colors hover:bg-white/10 hover:text-[#FFF0F5]"
-        >
-          {sfxEnabled ? <Volume2 className="h-4 w-4" /> : <VolumeX className="h-4 w-4" />}
-        </button>
-      </div>
-    </div>
+      )}
+    </button>
   );
 };

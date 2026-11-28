@@ -92,7 +92,7 @@ class SoundEngine {
 
   private sfxEnabled = true;
   private isPlayingMusic = false;
-  private volume = 0.45;
+  private volume = 1;
   private currentTrack: MusicTrack | null = null;
   private stepIndex = 0;
   private loopTimer: number | null = null;
@@ -100,9 +100,40 @@ class SoundEngine {
   private onTrackEndedCb: (() => void) | null = null;
   private playRequestId = 0;
   private chunkObjectUrls = new Map<string, string>();
+  private timeListeners = new Set<(currentTime: number, duration: number) => void>();
 
   public setOnTrackEnded(cb: (() => void) | null) {
     this.onTrackEndedCb = cb;
+  }
+
+  public onTimeUpdate(cb: (currentTime: number, duration: number) => void): () => void {
+    this.timeListeners.add(cb);
+    cb(this.getCurrentTime(), this.getDuration());
+    return () => {
+      this.timeListeners.delete(cb);
+    };
+  }
+
+  public getCurrentTime(): number {
+    return this.audioEl && !Number.isNaN(this.audioEl.currentTime) ? this.audioEl.currentTime : 0;
+  }
+
+  public getDuration(): number {
+    return this.audioEl && !Number.isNaN(this.audioEl.duration) ? this.audioEl.duration : 0;
+  }
+
+  public seek(seconds: number) {
+    if (this.audioEl && Number.isFinite(seconds)) {
+      const maxDur = this.audioEl.duration || 0;
+      this.audioEl.currentTime = maxDur > 0 ? Math.max(0, Math.min(maxDur, seconds)) : Math.max(0, seconds);
+      this.notifyTimeUpdate();
+    }
+  }
+
+  private notifyTimeUpdate() {
+    const cur = this.getCurrentTime();
+    const dur = this.getDuration();
+    this.timeListeners.forEach((cb) => cb(cur, dur));
   }
 
   private ensureContext(): AudioContext | null {
@@ -240,7 +271,14 @@ class SoundEngine {
   private ensureAudioEl(): HTMLAudioElement {
     if (!this.audioEl) {
       this.audioEl = new Audio();
+      this.audioEl.addEventListener('timeupdate', () => {
+        this.notifyTimeUpdate();
+      });
+      this.audioEl.addEventListener('durationchange', () => {
+        this.notifyTimeUpdate();
+      });
       this.audioEl.addEventListener('ended', () => {
+        this.notifyTimeUpdate();
         if (this.onTrackEndedCb) {
           this.onTrackEndedCb();
         } else if (this.audioEl && this.isPlayingMusic) {

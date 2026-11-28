@@ -43,7 +43,7 @@ export const AvatarFrame: React.FC<AvatarFrameProps> = ({
   if (size === 'card') {
     return (
       <div
-        className={`relative aspect-square w-full overflow-hidden rounded-2xl border-[1.25px] border-[#C4B5FD] bg-[#F5F3FF] shadow-[0_6px_16px_-6px_rgba(120,90,160,0.22)] ${className}`}
+        className={`relative aspect-square shrink-0 w-full overflow-hidden rounded-2xl border-[1.25px] border-[#C4B5FD] bg-[#F5F3FF] shadow-[0_6px_16px_-6px_rgba(120,90,160,0.22)] ${className}`}
       >
         {!imgError && activeSrc ? (
           <img
@@ -71,7 +71,7 @@ export const AvatarFrame: React.FC<AvatarFrameProps> = ({
 
   return (
     <div
-      className={`relative aspect-square overflow-hidden border-[1.25px] border-[#C4B5FD] bg-[#F5F3FF] shadow-[0_0_12px_rgba(255,255,255,0.85),0_8px_18px_-8px_rgba(120,90,160,0.22)] ring-1 ring-white/90 ${dims} ${className}`}
+      className={`relative aspect-square shrink-0 overflow-hidden border-[1.25px] border-[#C4B5FD] bg-[#F5F3FF] shadow-[0_0_12px_rgba(255,255,255,0.85),0_8px_18px_-8px_rgba(120,90,160,0.22)] ring-1 ring-white/90 ${dims} ${className}`}
     >
       {!imgError && activeSrc ? (
         <img
