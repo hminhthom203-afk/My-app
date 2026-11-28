@@ -94,7 +94,6 @@ interface MediaControlsCallbacks {
 class SoundEngine {
   private ctx: AudioContext | null = null;
   private masterGain: GainNode | null = null;
-  private musicGain: GainNode | null = null;
   private sfxGain: GainNode | null = null;
   private audioEl: HTMLAudioElement | null = null;
 
@@ -102,20 +101,21 @@ class SoundEngine {
   private isPlayingMusic = false;
   private volume = 1;
   private currentTrack: MusicTrack | null = null;
-  private stepIndex = 0;
-  private loopTimer: number | null = null;
   private lastHoverAt = 0;
   private onTrackEndedCb: (() => void) | null = null;
   private onPlaybackChangeCb: ((playing: boolean) => void) | null = null;
   private mediaControls: MediaControlsCallbacks | null = null;
   private mediaHandlersRegistered = false;
   private playRequestId = 0;
+  private activeTrackAttempt: { key: string; gestured: boolean } | null = null;
   private chunkObjectUrls = new Map<string, string>();
+  private chunkPrefetchPromises = new Map<string, Promise<string>>();
+  private synthWavUrls = new Map<SynthPreset, string>();
   private timeListeners = new Set<(currentTime: number, duration: number) => void>();
-  private isUsingSilentBridge = false;
+  private isUsingSynthLoop = false;
   private isInternalTransition = false;
-  private silentWavUrl: string | null = null;
-  private artworkUrl: string | null = null;
+  private isPrimed = false;
+  private tinySilentWavUrl: string | null = null;
   private lastPositionSyncAt = 0;
 
   public setOnTrackEnded(cb: (() => void) | null) {
@@ -140,20 +140,18 @@ class SoundEngine {
   }
 
   public getCurrentTime(): number {
-    if (this.isUsingSilentBridge) return 0;
     return this.audioEl && !Number.isNaN(this.audioEl.currentTime) ? this.audioEl.currentTime : 0;
   }
 
   public getDuration(): number {
-    if (this.isUsingSilentBridge) return 0;
     return this.audioEl && !Number.isNaN(this.audioEl.duration) ? this.audioEl.duration : 0;
   }
 
   public seek(seconds: number) {
-    if (this.isUsingSilentBridge) return;
     if (this.audioEl && Number.isFinite(seconds)) {
       const maxDur = this.audioEl.duration || 0;
-      this.audioEl.currentTime = maxDur > 0 ? Math.max(0, Math.min(maxDur, seconds)) : Math.max(0, seconds);
+      this.audioEl.currentTime =
+        maxDur > 0 ? Math.max(0, Math.min(maxDur, seconds)) : Math.max(0, seconds);
       this.notifyTimeUpdate();
       this.updateMediaPositionState(true);
     }
@@ -165,10 +163,10 @@ class SoundEngine {
     this.timeListeners.forEach((cb) => cb(cur, dur));
   }
 
-  private getSilentWavUrl(): string {
-    if (this.silentWavUrl) return this.silentWavUrl;
+  private getTinySilentWavUrl(): string {
+    if (this.tinySilentWavUrl) return this.tinySilentWavUrl;
     const sampleRate = 8000;
-    const numSamples = sampleRate;
+    const numSamples = 800; // 0.1s
     const buffer = new ArrayBuffer(44 + numSamples);
     const view = new DataView(buffer);
     const writeStr = (offset: number, str: string) => {
@@ -191,51 +189,104 @@ class SoundEngine {
     view.setUint32(40, numSamples, true);
     new Uint8Array(buffer, 44).fill(128);
     const blob = new Blob([buffer], { type: 'audio/wav' });
-    this.silentWavUrl = URL.createObjectURL(blob);
-    return this.silentWavUrl;
+    this.tinySilentWavUrl = URL.createObjectURL(blob);
+    return this.tinySilentWavUrl;
+  }
+
+  private getSynthWavUrl(presetKey: SynthPreset): string {
+    const cached = this.synthWavUrls.get(presetKey);
+    if (cached) return cached;
+
+    const score = PRESETS[presetKey] || PRESETS.rose_waltz;
+    const sampleRate = 22050;
+    const stepSec = 60 / score.bpm / 2;
+    const totalSteps = score.melody.length;
+    const totalSamples = Math.max(1, Math.floor(totalSteps * stepSec * sampleRate));
+    const mix = new Float32Array(totalSamples);
+
+    const addNote = (
+      startSec: number,
+      durationSec: number,
+      freq: number,
+      peak: number,
+      waveform: OscillatorType
+    ) => {
+      const startSample = Math.floor(startSec * sampleRate);
+      const lenSamples = Math.floor(durationSec * sampleRate);
+      const attackSamples = Math.max(1, Math.floor(0.02 * sampleRate));
+
+      for (let i = 0; i < lenSamples; i++) {
+        const idx = (startSample + i) % totalSamples;
+        const t = i / sampleRate;
+        const envAttack = i < attackSamples ? i / attackSamples : 1;
+        const envDecay = Math.exp(-3.8 * (i / lenSamples));
+        const env = envAttack * envDecay;
+        const phase = 2 * Math.PI * freq * t;
+        let sample = Math.sin(phase);
+        if (waveform === 'triangle') {
+          sample = (2 / Math.PI) * Math.asin(Math.sin(phase));
+        }
+        mix[idx] += sample * peak * env;
+      }
+    };
+
+    for (let step = 0; step < totalSteps; step++) {
+      const startSec = step * stepSec;
+      const mNote = score.melody[step % score.melody.length];
+      const bNote = score.bass[step % score.bass.length];
+
+      if (mNote > 0) {
+        addNote(startSec, 0.72, midiToFreq(mNote), 0.24, score.waveform);
+        addNote(startSec + 0.01, 0.35, midiToFreq(mNote + 12), 0.055, 'sine');
+      }
+      if (bNote > 0 && step % 2 === 0) {
+        addNote(startSec, 1.05, midiToFreq(bNote), 0.14, 'sine');
+      }
+    }
+
+    // Smooth fade-in/out over 4ms at loop seam to prevent clicks
+    const fadeSamples = Math.min(Math.floor(0.004 * sampleRate), Math.floor(totalSamples / 4));
+    for (let i = 0; i < fadeSamples; i++) {
+      const k = i / fadeSamples;
+      mix[i] *= k;
+      mix[totalSamples - 1 - i] *= k;
+    }
+
+    const buffer = new ArrayBuffer(44 + totalSamples * 2);
+    const view = new DataView(buffer);
+    const writeStr = (offset: number, str: string) => {
+      for (let i = 0; i < str.length; i++) {
+        view.setUint8(offset + i, str.charCodeAt(i));
+      }
+    };
+    writeStr(0, 'RIFF');
+    view.setUint32(4, 36 + totalSamples * 2, true);
+    writeStr(8, 'WAVE');
+    writeStr(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeStr(36, 'data');
+    view.setUint32(40, totalSamples * 2, true);
+
+    for (let i = 0; i < totalSamples; i++) {
+      const clamped = Math.max(-0.95, Math.min(0.95, mix[i]));
+      view.setInt16(44 + i * 2, Math.round(clamped * 32767), true);
+    }
+
+    const blob = new Blob([buffer], { type: 'audio/wav' });
+    const url = URL.createObjectURL(blob);
+    this.synthWavUrls.set(presetKey, url);
+    return url;
   }
 
   private getCandyArtworkUrl(): string {
-    if (this.artworkUrl) return this.artworkUrl;
-    if (typeof document === 'undefined') return '';
-    try {
-      const canvas = document.createElement('canvas');
-      canvas.width = 512;
-      canvas.height = 512;
-      const ctx = canvas.getContext('2d');
-      if (!ctx) return '';
-
-      const grad = ctx.createLinearGradient(0, 0, 512, 512);
-      grad.addColorStop(0, '#FFF0F5');
-      grad.addColorStop(0.5, '#FBCFE8');
-      grad.addColorStop(1, '#E2A6BA');
-      ctx.fillStyle = grad;
-      ctx.fillRect(0, 0, 512, 512);
-
-      ctx.beginPath();
-      ctx.arc(256, 256, 175, 0, Math.PI * 2);
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-      ctx.fill();
-      ctx.lineWidth = 10;
-      ctx.strokeStyle = '#B65A7C';
-      ctx.stroke();
-
-      ctx.beginPath();
-      ctx.arc(256, 256, 64, 0, Math.PI * 2);
-      ctx.fillStyle = '#6F1F3B';
-      ctx.fill();
-
-      ctx.fillStyle = '#FFF0F5';
-      ctx.font = 'bold 68px sans-serif';
-      ctx.textAlign = 'center';
-      ctx.textBaseline = 'middle';
-      ctx.fillText('♪', 256, 260);
-
-      this.artworkUrl = canvas.toDataURL('image/png');
-      return this.artworkUrl;
-    } catch {
-      return '';
-    }
+    if (typeof window === 'undefined') return '';
+    return `${window.location.origin}/assets/aistudio/b3d0d8ea8ac20daa182418f5c4ed3de2_3adce6a1.jpg`;
   }
 
   private registerMediaActionHandlers() {
@@ -251,7 +302,7 @@ class SoundEngine {
       try {
         session.setActionHandler(action, handler);
       } catch {
-        // Some browsers do not support certain action types
+        // Unsupported action in this browser
       }
     };
 
@@ -259,7 +310,7 @@ class SoundEngine {
       if (this.mediaControls) {
         this.mediaControls.onPlay();
       } else if (this.currentTrack) {
-        this.resumeOrPlayTrack(this.currentTrack);
+        void this.resumeOrPlayTrack(this.currentTrack);
         this.onPlaybackChangeCb?.(true);
       }
     });
@@ -291,19 +342,16 @@ class SoundEngine {
     });
 
     setHandler('seekto', (details) => {
-      if (this.isUsingSilentBridge) return;
       if (typeof details.seekTime === 'number') {
         this.seek(details.seekTime);
       }
     });
 
     setHandler('seekbackward', (details) => {
-      if (this.isUsingSilentBridge) return;
       this.seek(this.getCurrentTime() - (details.seekOffset || 10));
     });
 
     setHandler('seekforward', (details) => {
-      if (this.isUsingSilentBridge) return;
       this.seek(this.getCurrentTime() + (details.seekOffset || 10));
     });
   }
@@ -330,12 +378,12 @@ class SoundEngine {
         artist: (track.artist || '').trim() || 'Ăn Kẹo Hong',
         album: 'Hộp Nhạc Ăn Kẹo Hong',
         artwork: artworkSrc
-          ? [{ src: artworkSrc, sizes: '512x512', type: 'image/png' }]
+          ? [{ src: artworkSrc, sizes: '512x512', type: 'image/jpeg' }]
           : [],
       });
       session.playbackState = playing ? 'playing' : 'paused';
     } catch {
-      // ignore MediaMetadata errors on unsupported browsers
+      // ignore MediaMetadata errors
     }
 
     this.updateMediaPositionState(true);
@@ -344,16 +392,7 @@ class SoundEngine {
   private updateMediaPositionState(force = false) {
     if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
     const session = navigator.mediaSession;
-    if (typeof session.setPositionState !== 'function') return;
-
-    if (this.isUsingSilentBridge || !this.audioEl) {
-      try {
-        session.setPositionState(undefined);
-      } catch {
-        // ignore
-      }
-      return;
-    }
+    if (typeof session.setPositionState !== 'function' || !this.audioEl) return;
 
     const now = performance.now();
     if (!force && now - this.lastPositionSyncAt < 900) return;
@@ -377,16 +416,14 @@ class SoundEngine {
   private ensureContext(): AudioContext | null {
     if (typeof window === 'undefined') return null;
     if (!this.ctx) {
-      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const AudioCtx =
+        window.AudioContext ||
+        (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       if (!AudioCtx) return null;
       this.ctx = new AudioCtx();
       this.masterGain = this.ctx.createGain();
       this.masterGain.gain.value = 1;
       this.masterGain.connect(this.ctx.destination);
-
-      this.musicGain = this.ctx.createGain();
-      this.musicGain.gain.value = this.volume;
-      this.musicGain.connect(this.masterGain);
 
       this.sfxGain = this.ctx.createGain();
       this.sfxGain.gain.value = this.sfxEnabled ? 0.35 : 0;
@@ -400,6 +437,30 @@ class SoundEngine {
 
   public unlock() {
     this.ensureContext();
+    this.ensureAudioEl();
+  }
+
+  public primeOnUserGesture() {
+    this.ensureContext();
+    const audio = this.ensureAudioEl();
+    if (this.isPrimed || this.isPlayingMusic) return;
+    try {
+      this.isInternalTransition = true;
+      audio.src = this.getTinySilentWavUrl();
+      audio.loop = false;
+      audio.volume = 0.01;
+      void audio
+        .play()
+        .then(() => {
+          this.isPrimed = true;
+        })
+        .catch(() => {})
+        .finally(() => {
+          this.isInternalTransition = false;
+        });
+    } catch {
+      this.isInternalTransition = false;
+    }
   }
 
   public setSfxEnabled(enabled: boolean) {
@@ -415,10 +476,7 @@ class SoundEngine {
 
   public setVolume(val: number) {
     this.volume = Math.max(0, Math.min(1, val));
-    if (this.musicGain && this.ctx) {
-      this.musicGain.gain.setTargetAtTime(this.volume, this.ctx.currentTime, 0.05);
-    }
-    if (this.audioEl && !this.isUsingSilentBridge) {
+    if (this.audioEl) {
       this.audioEl.volume = this.volume;
     }
   }
@@ -432,15 +490,11 @@ class SoundEngine {
     duration: number,
     type: OscillatorType = 'sine',
     peak = 0.2,
-    delay = 0,
-    target: 'sfx' | 'music' = 'sfx'
+    delay = 0
   ) {
+    if (!this.sfxEnabled) return;
     const ctx = this.ensureContext();
-    if (!ctx) return;
-    if (target === 'sfx' && !this.sfxEnabled) return;
-
-    const dest = target === 'sfx' ? this.sfxGain : this.musicGain;
-    if (!dest) return;
+    if (!ctx || !this.sfxGain) return;
 
     const now = ctx.currentTime + delay;
     const osc = ctx.createOscillator();
@@ -454,52 +508,48 @@ class SoundEngine {
     env.gain.exponentialRampToValueAtTime(0.0001, now + duration);
 
     osc.connect(env);
-    env.connect(dest);
+    env.connect(this.sfxGain);
 
     osc.start(now);
     osc.stop(now + duration + 0.04);
   }
 
   public playChime() {
-    this.playTone(880, 0.22, 'sine', 0.16, 0, 'sfx');
-    this.playTone(1318.5, 0.28, 'triangle', 0.1, 0.04, 'sfx');
+    this.playTone(880, 0.22, 'sine', 0.16, 0);
+    this.playTone(1318.5, 0.28, 'triangle', 0.1, 0.04);
   }
 
   public playHoverTick() {
     const now = performance.now();
     if (now - this.lastHoverAt < 140) return;
     this.lastHoverAt = now;
-    this.playTone(1046.5, 0.12, 'sine', 0.06, 0, 'sfx');
+    this.playTone(1046.5, 0.12, 'sine', 0.06, 0);
   }
 
   public playHeartPop() {
-    this.playTone(659.25, 0.14, 'sine', 0.18, 0, 'sfx');
-    this.playTone(987.77, 0.18, 'sine', 0.16, 0.06, 'sfx');
-    this.playTone(1318.5, 0.26, 'triangle', 0.12, 0.12, 'sfx');
+    this.playTone(659.25, 0.14, 'sine', 0.18, 0);
+    this.playTone(987.77, 0.18, 'sine', 0.16, 0.06);
+    this.playTone(1318.5, 0.26, 'triangle', 0.12, 0.12);
   }
 
   public playSparkle() {
     const notes = [659.25, 783.99, 987.77, 1174.66, 1318.5];
     notes.forEach((n, idx) => {
-      this.playTone(n, 0.35, 'sine', 0.12, idx * 0.055, 'sfx');
+      this.playTone(n, 0.35, 'sine', 0.12, idx * 0.055);
     });
   }
 
   public playPageTurn() {
-    this.playTone(587.33, 0.18, 'sine', 0.12, 0, 'sfx');
-    this.playTone(880, 0.24, 'sine', 0.1, 0.05, 'sfx');
+    this.playTone(587.33, 0.18, 'sine', 0.12, 0);
+    this.playTone(880, 0.24, 'sine', 0.1, 0.05);
   }
 
   public playSuccess() {
-    this.playTone(523.25, 0.18, 'triangle', 0.15, 0, 'sfx');
-    this.playTone(783.99, 0.32, 'sine', 0.18, 0.08, 'sfx');
+    this.playTone(523.25, 0.18, 'triangle', 0.15, 0);
+    this.playTone(783.99, 0.32, 'sine', 0.18, 0.08);
   }
 
-  private stopLoopOnly() {
-    if (this.loopTimer !== null) {
-      window.clearInterval(this.loopTimer);
-      this.loopTimer = null;
-    }
+  private stopAudioOnly() {
     if (this.audioEl) {
       this.isInternalTransition = true;
       try {
@@ -509,17 +559,19 @@ class SoundEngine {
         this.isInternalTransition = false;
       }
     }
-    this.isUsingSilentBridge = false;
+    this.isUsingSynthLoop = false;
   }
 
   private ensureAudioEl(): HTMLAudioElement {
     if (!this.audioEl) {
-      this.audioEl = new Audio();
+      this.audioEl = document.createElement('audio');
       this.audioEl.setAttribute('playsinline', 'true');
+      this.audioEl.setAttribute('webkit-playsinline', 'true');
+      this.audioEl.setAttribute('aria-hidden', 'true');
       this.audioEl.preload = 'auto';
+      this.audioEl.style.display = 'none';
 
       this.audioEl.addEventListener('timeupdate', () => {
-        if (this.isUsingSilentBridge) return;
         this.notifyTimeUpdate();
         this.updateMediaPositionState(false);
       });
@@ -530,38 +582,30 @@ class SoundEngine {
       });
 
       this.audioEl.addEventListener('seeked', () => {
-        if (!this.isUsingSilentBridge) {
-          this.updateMediaPositionState(true);
-        }
+        this.updateMediaPositionState(true);
       });
 
       this.audioEl.addEventListener('pause', () => {
         if (this.isInternalTransition) return;
         if (this.isPlayingMusic && this.audioEl && !this.audioEl.ended) {
           this.isPlayingMusic = false;
-          if (this.loopTimer !== null) {
-            window.clearInterval(this.loopTimer);
-            this.loopTimer = null;
-          }
           this.syncMediaSession(this.currentTrack, false);
           this.onPlaybackChangeCb?.(false);
         }
       });
 
       this.audioEl.addEventListener('play', () => {
+        this.isPrimed = true;
         if (this.isInternalTransition) return;
         if (!this.isPlayingMusic && this.currentTrack) {
           this.isPlayingMusic = true;
-          if (this.isUsingSilentBridge && this.loopTimer === null) {
-            this.startSynthLoopOnly(this.currentTrack.synthPreset || 'rose_waltz');
-          }
           this.syncMediaSession(this.currentTrack, true);
           this.onPlaybackChangeCb?.(true);
         }
       });
 
       this.audioEl.addEventListener('ended', () => {
-        if (this.isUsingSilentBridge) return;
+        if (this.isUsingSynthLoop) return;
         this.notifyTimeUpdate();
         if (this.onTrackEndedCb) {
           this.onTrackEndedCb();
@@ -571,6 +615,11 @@ class SoundEngine {
         }
       });
     }
+
+    if (typeof document !== 'undefined' && document.body && !this.audioEl.isConnected) {
+      document.body.appendChild(this.audioEl);
+    }
+
     return this.audioEl;
   }
 
@@ -579,202 +628,186 @@ class SoundEngine {
     const existing = this.chunkObjectUrls.get(cacheKey);
     if (existing) return existing;
 
-    const parts = track.audioUrl.split(':');
-    const mimeType = parts.slice(2).join(':') || 'audio/mpeg';
-    const snap = await getDocs(collection(db, 'tracks', track.id, 'chunks'));
-    const sorted = snap.docs
-      .map((d) => d.data() as { index?: number; data?: string; mimeType?: string })
-      .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+    const pending = this.chunkPrefetchPromises.get(cacheKey);
+    if (pending) return pending;
 
-    if (sorted.length === 0) {
-      throw new Error('Không tìm thấy dữ liệu âm thanh của bài hát.');
+    const promise = (async () => {
+      const parts = track.audioUrl.split(':');
+      const mimeType = parts.slice(2).join(':') || 'audio/mpeg';
+      const snap = await getDocs(collection(db, 'tracks', track.id, 'chunks'));
+      const sorted = snap.docs
+        .map((d) => d.data() as { index?: number; data?: string; mimeType?: string })
+        .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+
+      if (sorted.length === 0) {
+        throw new Error('Không tìm thấy dữ liệu âm thanh của bài hát.');
+      }
+
+      const byteArrays: Uint8Array<ArrayBuffer>[] = sorted
+        .filter((c) => typeof c.data === 'string' && c.data.length > 0)
+        .map((c) => new Uint8Array(base64ToUint8Array(c.data!)));
+
+      const resolvedMime = sorted[0]?.mimeType || mimeType;
+      const blob = new Blob(byteArrays, { type: resolvedMime });
+      const objectUrl = URL.createObjectURL(blob);
+      this.chunkObjectUrls.set(cacheKey, objectUrl);
+      return objectUrl;
+    })();
+
+    this.chunkPrefetchPromises.set(cacheKey, promise);
+    try {
+      return await promise;
+    } catch (err) {
+      this.chunkPrefetchPromises.delete(cacheKey);
+      throw err;
     }
-
-    const byteArrays: Uint8Array<ArrayBuffer>[] = sorted
-      .filter((c) => typeof c.data === 'string' && c.data.length > 0)
-      .map((c) => new Uint8Array(base64ToUint8Array(c.data!)));
-
-    const resolvedMime = sorted[0]?.mimeType || mimeType;
-    const blob = new Blob(byteArrays, { type: resolvedMime });
-    const objectUrl = URL.createObjectURL(blob);
-    this.chunkObjectUrls.set(cacheKey, objectUrl);
-    return objectUrl;
   }
 
-  public playTrack(track: MusicTrack) {
-    this.ensureContext();
-    this.stopLoopOnly();
-    this.currentTrack = track;
-    this.isPlayingMusic = true;
-    this.stepIndex = 0;
-    const reqId = ++this.playRequestId;
-    this.syncMediaSession(track, true);
-
+  public preloadTrack(track: MusicTrack) {
+    if (!track) return;
     const rawUrl = (track.audioUrl || '').trim();
-    if (rawUrl.length > 0) {
-      if (rawUrl.startsWith('chunks:')) {
-        void this.resolveChunkedTrackUrl(track)
-          .then((objectUrl) => {
-            if (reqId !== this.playRequestId || !this.isPlayingMusic) return;
-            const audio = this.ensureAudioEl();
-            this.isInternalTransition = true;
-            try {
-              this.isUsingSilentBridge = false;
-              audio.loop = false;
-              audio.src = objectUrl;
-              audio.volume = this.volume;
-            } finally {
-              this.isInternalTransition = false;
-            }
-            return audio.play().then(() => {
-              if (reqId === this.playRequestId && this.isPlayingMusic) {
-                this.syncMediaSession(track, true);
-              }
-            });
-          })
-          .catch(() => {
-            if (reqId === this.playRequestId && this.isPlayingMusic) {
-              this.startSynthLoop(track.synthPreset || 'rose_waltz');
-            }
-          });
-        return;
-      }
-
-      const audio = this.ensureAudioEl();
-      this.isInternalTransition = true;
-      try {
-        this.isUsingSilentBridge = false;
-        audio.loop = false;
-        audio.src = normalizeMediaUrl(rawUrl, 'audio');
-        audio.volume = this.volume;
-      } finally {
-        this.isInternalTransition = false;
-      }
-      audio
-        .play()
-        .then(() => {
-          if (reqId === this.playRequestId && this.isPlayingMusic) {
-            this.syncMediaSession(track, true);
-          }
-        })
-        .catch(() => {
-          if (reqId === this.playRequestId && this.isPlayingMusic) {
-            this.startSynthLoop(track.synthPreset || 'rose_waltz');
-          }
-        });
-      return;
+    if (rawUrl.startsWith('chunks:')) {
+      void this.resolveChunkedTrackUrl(track).catch(() => {});
+    } else if (!rawUrl) {
+      this.getSynthWavUrl(track.synthPreset || 'rose_waltz');
     }
-
-    this.startSynthLoop(track.synthPreset || 'rose_waltz');
   }
 
-  public resumeOrPlayTrack(track: MusicTrack) {
+  private async startAudioSrc(
+    srcUrl: string,
+    loop: boolean,
+    isSynth: boolean,
+    track: MusicTrack,
+    reqId: number
+  ): Promise<'playing' | 'blocked' | 'error'> {
+    if (reqId !== this.playRequestId) return 'error';
+    const audio = this.ensureAudioEl();
+    this.isInternalTransition = true;
+    try {
+      this.isUsingSynthLoop = isSynth;
+      audio.loop = loop;
+      if (audio.src !== srcUrl) {
+        audio.src = srcUrl;
+      }
+      audio.volume = this.volume;
+    } finally {
+      this.isInternalTransition = false;
+    }
+
+    try {
+      await audio.play();
+      if (reqId !== this.playRequestId) return 'error';
+      this.isPrimed = true;
+      this.isPlayingMusic = true;
+      this.syncMediaSession(track, true);
+      this.onPlaybackChangeCb?.(true);
+      return 'playing';
+    } catch (err) {
+      const errName = (err as { name?: string })?.name || '';
+      if (errName === 'NotAllowedError') {
+        this.isPlayingMusic = false;
+        this.onPlaybackChangeCb?.(false);
+        return 'blocked';
+      }
+      if (errName === 'AbortError') {
+        return 'error';
+      }
+      return 'error';
+    }
+  }
+
+  public async playTrack(
+    track: MusicTrack,
+    fromGesture = false
+  ): Promise<'playing' | 'blocked' | 'error'> {
+    const attemptKey = `${track.id}|${track.audioUrl}`;
+    if (
+      this.activeTrackAttempt &&
+      this.activeTrackAttempt.key === attemptKey &&
+      this.activeTrackAttempt.gestured
+    ) {
+      return this.isPlayingMusic ? 'playing' : 'error';
+    }
+
+    this.ensureContext();
+    this.stopAudioOnly();
+    this.currentTrack = track;
+    const reqId = ++this.playRequestId;
+    this.activeTrackAttempt = { key: attemptKey, gestured: fromGesture };
+
+    try {
+      const rawUrl = (track.audioUrl || '').trim();
+      if (rawUrl.length > 0) {
+        if (rawUrl.startsWith('chunks:')) {
+          const cachedUrl = this.chunkObjectUrls.get(attemptKey);
+          if (cachedUrl) {
+            const result = await this.startAudioSrc(cachedUrl, false, false, track, reqId);
+            if (result !== 'error') return result;
+          } else {
+            if (fromGesture && !this.isPrimed) {
+              this.primeOnUserGesture();
+            }
+            try {
+              const objectUrl = await this.resolveChunkedTrackUrl(track);
+              if (reqId !== this.playRequestId) return 'error';
+              const result = await this.startAudioSrc(objectUrl, false, false, track, reqId);
+              if (result !== 'error') return result;
+            } catch {
+              // Fall through to synthesized WAV fallback
+            }
+          }
+        } else {
+          const directUrl = normalizeMediaUrl(rawUrl, 'audio');
+          const result = await this.startAudioSrc(directUrl, false, false, track, reqId);
+          if (result !== 'error') return result;
+        }
+      }
+
+      const synthUrl = this.getSynthWavUrl(track.synthPreset || 'rose_waltz');
+      return await this.startAudioSrc(synthUrl, true, true, track, reqId);
+    } finally {
+      if (reqId === this.playRequestId) {
+        this.activeTrackAttempt = null;
+      }
+    }
+  }
+
+  public async resumeOrPlayTrack(track: MusicTrack): Promise<'playing' | 'blocked' | 'error'> {
     if (
       this.currentTrack &&
       this.currentTrack.id === track.id &&
-      (this.currentTrack.audioUrl || '') === (track.audioUrl || '')
+      (this.currentTrack.audioUrl || '') === (track.audioUrl || '') &&
+      this.audioEl &&
+      this.audioEl.src &&
+      this.audioEl.src !== this.tinySilentWavUrl
     ) {
       this.ensureContext();
       this.currentTrack = track;
-      this.isPlayingMusic = true;
-      this.syncMediaSession(track, true);
-
-      if (this.isUsingSilentBridge) {
-        this.startSilentBridgeAudio();
-        if (this.loopTimer === null) {
-          this.startSynthLoopOnly(track.synthPreset || 'rose_waltz');
-        }
-        return;
-      }
-
-      if (this.audioEl && this.audioEl.src) {
-        this.audioEl.volume = this.volume;
-        this.audioEl
-          .play()
-          .then(() => {
-            if (this.isPlayingMusic) {
-              this.syncMediaSession(track, true);
-            }
-          })
-          .catch(() => {
-            this.playTrack(track);
-          });
-        return;
-      }
-    }
-    this.playTrack(track);
-  }
-
-  private startSilentBridgeAudio() {
-    try {
-      const audio = this.ensureAudioEl();
-      const wavUrl = this.getSilentWavUrl();
-      this.isInternalTransition = true;
+      const reqId = ++this.playRequestId;
+      this.audioEl.volume = this.volume;
       try {
-        this.isUsingSilentBridge = true;
-        if (audio.src !== wavUrl) {
-          audio.src = wavUrl;
+        await this.audioEl.play();
+        if (reqId !== this.playRequestId) return 'error';
+        this.isPrimed = true;
+        this.isPlayingMusic = true;
+        this.syncMediaSession(track, true);
+        this.onPlaybackChangeCb?.(true);
+        return 'playing';
+      } catch (err) {
+        const errName = (err as { name?: string })?.name || '';
+        if (errName === 'NotAllowedError') {
+          this.isPlayingMusic = false;
+          this.onPlaybackChangeCb?.(false);
+          return 'blocked';
         }
-        audio.loop = true;
-        audio.volume = 1;
-      } finally {
-        this.isInternalTransition = false;
       }
-      this.notifyTimeUpdate();
-      this.updateMediaPositionState(true);
-      void audio
-        .play()
-        .then(() => {
-          if (this.isPlayingMusic && this.currentTrack) {
-            this.syncMediaSession(this.currentTrack, true);
-          }
-        })
-        .catch(() => {});
-    } catch {
-      // ignore silent bridge errors
     }
-  }
-
-  private startSynthLoopOnly(presetKey: SynthPreset) {
-    if (this.loopTimer !== null) {
-      window.clearInterval(this.loopTimer);
-      this.loopTimer = null;
-    }
-    const score = PRESETS[presetKey] || PRESETS.rose_waltz;
-    const stepMs = (60 / score.bpm / 2) * 1000;
-
-    const tick = () => {
-      if (!this.isPlayingMusic) return;
-      const mNote = score.melody[this.stepIndex % score.melody.length];
-      const bNote = score.bass[this.stepIndex % score.bass.length];
-
-      if (mNote > 0) {
-        this.playTone(midiToFreq(mNote), 0.72, score.waveform, 0.18, 0, 'music');
-        // delicate overtone shimmer
-        this.playTone(midiToFreq(mNote + 12), 0.35, 'sine', 0.04, 0.01, 'music');
-      }
-      if (bNote > 0 && this.stepIndex % 2 === 0) {
-        this.playTone(midiToFreq(bNote), 1.1, 'sine', 0.11, 0, 'music');
-      }
-
-      this.stepIndex = (this.stepIndex + 1) % score.melody.length;
-    };
-
-    tick();
-    this.loopTimer = window.setInterval(tick, stepMs);
-  }
-
-  private startSynthLoop(presetKey: SynthPreset) {
-    this.startSilentBridgeAudio();
-    this.startSynthLoopOnly(presetKey);
+    return this.playTrack(track);
   }
 
   public pauseMusic() {
+    this.playRequestId++;
     this.isPlayingMusic = false;
-    if (this.loopTimer !== null) {
-      window.clearInterval(this.loopTimer);
-      this.loopTimer = null;
-    }
     if (this.audioEl) {
       this.isInternalTransition = true;
       try {
@@ -787,16 +820,17 @@ class SoundEngine {
   }
 
   public stopMusic() {
+    this.playRequestId++;
     this.isPlayingMusic = false;
-    this.stopLoopOnly();
+    this.stopAudioOnly();
     this.syncMediaSession(null, false);
   }
 
   public resumeMusic(fallbackTrack?: MusicTrack) {
     if (this.currentTrack) {
-      this.resumeOrPlayTrack(this.currentTrack);
+      void this.resumeOrPlayTrack(this.currentTrack);
     } else if (fallbackTrack) {
-      this.playTrack(fallbackTrack);
+      void this.playTrack(fallbackTrack);
     }
   }
 

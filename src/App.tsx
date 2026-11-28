@@ -110,6 +110,10 @@ export default function App() {
   const tracksRef = useRef<MusicTrack[]>([]);
   const currentTrackIdRef = useRef<string>('');
   const isShuffleRef = useRef<boolean>(true);
+  const isPlayingMusicRef = useRef<boolean>(false);
+  const hasAutoStartedRef = useRef<boolean>(false);
+  const userInteractedRef = useRef<boolean>(false);
+  const pausedByInAppHideRef = useRef<boolean>(false);
   const navScrollRef = useRef<HTMLElement | null>(null);
   const navDragRef = useRef({
     isDown: false,
@@ -129,6 +133,14 @@ export default function App() {
   useEffect(() => {
     isShuffleRef.current = isShuffle;
   }, [isShuffle]);
+
+  useEffect(() => {
+    isPlayingMusicRef.current = isPlayingMusic;
+  }, [isPlayingMusic]);
+
+  useEffect(() => {
+    hasAutoStartedRef.current = hasAutoStarted;
+  }, [hasAutoStarted]);
 
   const reportActionFailure = (
     err: unknown,
@@ -638,28 +650,124 @@ export default function App() {
     };
   }, []);
 
-  // First-click autoplay
+  // Preload tracks immediately, try instant autoplay on entry, and bind zero-delay first gesture start
   useEffect(() => {
-    if (hasAutoStarted) return;
-    const handleFirstPointer = () => {
-      if (hasAutoStarted) return;
+    if (tracks.length === 0) return;
+
+    const existingTrack = tracks.find((t) => t.id === currentTrackIdRef.current);
+    const chosen =
+      existingTrack ||
+      (isShuffleRef.current && tracks.length > 1
+        ? tracks[Math.floor(Math.random() * tracks.length)]
+        : tracks[0]);
+
+    if (!chosen) return;
+    if (!existingTrack) {
+      setCurrentTrackId(chosen.id);
+      currentTrackIdRef.current = chosen.id;
+    }
+
+    // Preload the chosen track immediately (and background-preload the next few)
+    soundEngine.preloadTrack(chosen);
+    tracks.slice(0, 4).forEach((t) => {
+      if (t.id !== chosen.id) soundEngine.preloadTrack(t);
+    });
+
+    if (hasAutoStartedRef.current) return;
+
+    soundEngine.unlock();
+    void soundEngine.playTrack(chosen, userInteractedRef.current).then((status) => {
+      if (status === 'playing') {
+        setIsPlayingMusic(true);
+        setHasAutoStarted(true);
+        hasAutoStartedRef.current = true;
+      }
+    });
+  }, [tracks]);
+
+  useEffect(() => {
+    const startOnGesture = () => {
+      userInteractedRef.current = true;
+      if (hasAutoStartedRef.current || isPlayingMusicRef.current || soundEngine.isPlaying()) return;
+
       const list = tracksRef.current;
-      const firstTrack =
-        list.find((t) => t.id === currentTrackId) ||
+      if (list.length === 0) {
+        soundEngine.primeOnUserGesture();
+        return;
+      }
+
+      const target =
+        list.find((t) => t.id === currentTrackIdRef.current) ||
         (isShuffleRef.current && list.length > 1
           ? list[Math.floor(Math.random() * list.length)]
           : list[0]);
-      if (firstTrack) {
-        soundEngine.unlock();
-        soundEngine.playTrack(firstTrack);
-        setCurrentTrackId(firstTrack.id);
-        setIsPlayingMusic(true);
-        setHasAutoStarted(true);
+      if (!target) return;
+
+      setCurrentTrackId(target.id);
+      currentTrackIdRef.current = target.id;
+
+      void soundEngine.playTrack(target, true).then((status) => {
+        if (status === 'playing') {
+          setIsPlayingMusic(true);
+          hasAutoStartedRef.current = true;
+          setHasAutoStarted(true);
+        }
+      });
+    };
+
+    const opts: AddEventListenerOptions = { capture: true, passive: true };
+    window.addEventListener('touchend', startOnGesture, opts);
+    window.addEventListener('pointerup', startOnGesture, opts);
+    window.addEventListener('click', startOnGesture, opts);
+    window.addEventListener('keydown', startOnGesture, opts);
+    return () => {
+      window.removeEventListener('touchend', startOnGesture, opts);
+      window.removeEventListener('pointerup', startOnGesture, opts);
+      window.removeEventListener('click', startOnGesture, opts);
+      window.removeEventListener('keydown', startOnGesture, opts);
+    };
+  }, []);
+
+  // In-app WebViews (Facebook, Messenger, TikTok, Instagram, Zalo) cannot display Android/iOS media notifications.
+  // Pause music cleanly when exiting those in-app WebViews so it doesn't keep playing unseen in the background.
+  useEffect(() => {
+    if (typeof navigator === 'undefined') return;
+    const isInAppBrowser = /FBAN|FBAV|FB_IAB|Messenger|BytedanceWebview|TikTok|musical_ly|Instagram|Zalo/i.test(
+      navigator.userAgent || ''
+    );
+    if (!isInAppBrowser) return;
+
+    const handleHide = () => {
+      if (isPlayingMusicRef.current || soundEngine.isPlaying()) {
+        pausedByInAppHideRef.current = true;
+        soundEngine.pauseMusic();
+        setIsPlayingMusic(false);
       }
     };
-    window.addEventListener('pointerdown', handleFirstPointer, { once: true });
-    return () => window.removeEventListener('pointerdown', handleFirstPointer);
-  }, [hasAutoStarted, tracks, currentTrackId]);
+
+    const handleVisibility = () => {
+      if (document.hidden) {
+        handleHide();
+      } else if (pausedByInAppHideRef.current) {
+        pausedByInAppHideRef.current = false;
+        const active =
+          tracksRef.current.find((t) => t.id === currentTrackIdRef.current) ||
+          tracksRef.current[0];
+        if (active) {
+          void soundEngine.resumeOrPlayTrack(active).then((status) => {
+            if (status === 'playing') setIsPlayingMusic(true);
+          });
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('pagehide', handleHide);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('pagehide', handleHide);
+    };
+  }, []);
 
   const currentTrack = useMemo(
     () => tracks.find((t) => t.id === currentTrackId) || tracks[0],
@@ -770,19 +878,25 @@ export default function App() {
   const handleEnterFromIntro = () => {
     setView('gallery');
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    userInteractedRef.current = true;
     try {
       soundEngine.unlock();
       soundEngine.playSparkle();
       const first =
-        tracks.find((t) => t.id === currentTrackId) ||
+        tracks.find((t) => t.id === currentTrackIdRef.current) ||
         (isShuffle && tracks.length > 1
           ? tracks[Math.floor(Math.random() * tracks.length)]
           : tracks[0]);
-      if (first && !isPlayingMusic) {
-        soundEngine.playTrack(first);
+      if (first && !isPlayingMusicRef.current && !soundEngine.isPlaying()) {
         setCurrentTrackId(first.id);
-        setIsPlayingMusic(true);
-        setHasAutoStarted(true);
+        currentTrackIdRef.current = first.id;
+        void soundEngine.playTrack(first, true).then((status) => {
+          if (status === 'playing') {
+            setIsPlayingMusic(true);
+            hasAutoStartedRef.current = true;
+            setHasAutoStarted(true);
+          }
+        });
       }
     } catch {
       // ignore audio playback failure
