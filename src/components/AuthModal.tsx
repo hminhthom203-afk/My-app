@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import {
   createUserWithEmailAndPassword,
+  getAdditionalUserInfo,
   sendEmailVerification,
   sendPasswordResetEmail,
   confirmPasswordReset,
@@ -9,8 +10,10 @@ import {
   signOut,
   updateProfile,
 } from 'firebase/auth';
-import { Eye, EyeOff, MailCheck, RefreshCw, LogOut, X, ArrowLeft, KeyRound } from 'lucide-react';
-import { auth, googleProvider } from '../firebase';
+import { doc, getDoc } from 'firebase/firestore';
+import { Eye, EyeOff, MailCheck, RefreshCw, LogOut, X, ArrowLeft } from 'lucide-react';
+import { auth, db, googleProvider } from '../firebase';
+import { ADMIN_EMAIL } from '../data/initialData';
 import { UserProfile } from '../types';
 
 interface AuthModalProps {
@@ -36,13 +39,53 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [suggestRegister, setSuggestRegister] = useState(false);
   const [awaitingVerification, setAwaitingVerification] = useState(false);
+  const [needsFirstNickname, setNeedsFirstNickname] = useState(false);
   const [resetEmailSent, setResetEmailSent] = useState(false);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [busy, setBusy] = useState(false);
 
+  const resolveExistingNickname = async (
+    fbUser: NonNullable<typeof auth.currentUser>,
+    isNewGoogleUser = false
+  ): Promise<string> => {
+    const emailLower = (fbUser.email || '').toLowerCase();
+    const isAdmin = emailLower === ADMIN_EMAIL;
+
+    let docNick = '';
+    if (!isAdmin) {
+      try {
+        const snap = await getDoc(doc(db, 'users', fbUser.uid));
+        if (snap.exists()) {
+          docNick = String(snap.data()?.name || '').trim();
+        }
+      } catch {
+        // ignore Firestore read error
+      }
+    }
+
+    let localNick = '';
+    try {
+      localNick = (localStorage.getItem(`candy_nickname_${fbUser.uid}`) || '').trim();
+    } catch {
+      localNick = '';
+    }
+
+    const isGoogle = fbUser.providerData.some((p) => p?.providerId === 'google.com');
+    const authDisplay = (fbUser.displayName || '').trim();
+
+    if (docNick) return docNick;
+    if (localNick) return localNick;
+    if (!isGoogle && authDisplay) return authDisplay;
+    if (isAdmin && !isNewGoogleUser && authDisplay) return authDisplay;
+    return '';
+  };
+
   useEffect(() => {
-    if (!isOpen) return;
+    if (!isOpen) {
+      setNeedsFirstNickname(false);
+      return;
+    }
     setError('');
     setInfo('');
     setSuggestRegister(false);
@@ -62,18 +105,44 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
     if (currentUser && !currentUser.emailVerified) {
       setAwaitingVerification(true);
+      setNeedsFirstNickname(false);
       setInfo(
         `Tài khoản ${currentUser.email} hiện chưa xác minh Gmail nên chưa thể thả tim hoặc gửi lời nhắn. Hãy mở Gmail bấm vào liên kết xác minh (kiểm tra cả mục Thư rác / Spam), rồi bấm "Tôi đã xác minh email".`
       );
-    } else {
+    } else if (!currentUser && !auth.currentUser) {
       setAwaitingVerification(false);
-      if (!currentUser) {
-        setDisplayName('');
-      }
+      setNeedsFirstNickname(false);
+      setDisplayName('');
     }
   }, [isOpen, currentUser]);
 
+  // If modal opened while a verified viewer already exists without a saved nickname (e.g. after reload)
+  useEffect(() => {
+    if (!isOpen || awaitingVerification || needsFirstNickname) return;
+    const fbUser = auth.currentUser;
+    if (!fbUser || !fbUser.emailVerified) return;
+    let cancelled = false;
+    void (async () => {
+      const existing = await resolveExistingNickname(fbUser, false);
+      if (!cancelled && !existing) {
+        setDisplayName('');
+        setNeedsFirstNickname(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [isOpen, awaitingVerification, needsFirstNickname]);
+
   if (!isOpen) return null;
+
+  const handleCloseModal = () => {
+    if (needsFirstNickname && auth.currentUser) {
+      void signOut(auth).catch(() => {});
+      setNeedsFirstNickname(false);
+    }
+    onClose();
+  };
 
   const handleCheckVerification = async () => {
     if (!auth.currentUser) return;
@@ -83,12 +152,35 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       await auth.currentUser.reload();
       if (auth.currentUser.emailVerified) {
         await auth.currentUser.getIdToken(true);
-        const savedNick =
-          displayName.trim() ||
-          localStorage.getItem('candy_pending_nickname') ||
-          localStorage.getItem(`candy_nickname_${auth.currentUser.uid}`) ||
-          '';
-        onRefreshAuth(savedNick || undefined);
+        let savedNick = '';
+        try {
+          savedNick = (
+            displayName.trim() ||
+            localStorage.getItem('candy_pending_nickname') ||
+            localStorage.getItem(`candy_nickname_${auth.currentUser.uid}`) ||
+            ''
+          ).trim();
+        } catch {
+          savedNick = displayName.trim();
+        }
+        if (!savedNick) {
+          savedNick = await resolveExistingNickname(auth.currentUser, false);
+        }
+        if (!savedNick) {
+          setAwaitingVerification(false);
+          setDisplayName('');
+          setNeedsFirstNickname(true);
+          return;
+        }
+        try {
+          localStorage.setItem(`candy_nickname_${auth.currentUser.uid}`, savedNick);
+        } catch {
+          // ignore
+        }
+        if ((auth.currentUser.displayName || '').trim() !== savedNick) {
+          await updateProfile(auth.currentUser, { displayName: savedNick }).catch(() => {});
+        }
+        onRefreshAuth(savedNick);
         onClose();
       } else {
         setError(
@@ -132,20 +224,47 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     try {
       await signOut(auth);
       setAwaitingVerification(false);
+      setNeedsFirstNickname(false);
       setMode('login');
       setPassword('');
+      setDisplayName('');
     } finally {
       setBusy(false);
     }
   };
 
-  const validateNickname = (): string | null => {
+  const validateNickname = (message = 'Vui lòng nhập biệt danh.'): string | null => {
     const nick = displayName.trim();
     if (!nick) {
-      setError('Vui lòng nhập biệt danh trước khi đăng nhập.');
+      setError(message);
       return null;
     }
     return nick;
+  };
+
+  const handleSaveFirstNickname = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    const nick = validateNickname('Vui lòng nhập biệt danh để hoàn tất.');
+    if (!nick || !auth.currentUser) return;
+
+    setBusy(true);
+    try {
+      try {
+        localStorage.setItem('candy_pending_nickname', nick);
+        localStorage.setItem(`candy_nickname_${auth.currentUser.uid}`, nick);
+      } catch {
+        // ignore storage error
+      }
+      await updateProfile(auth.currentUser, { displayName: nick }).catch(() => {});
+      onRefreshAuth(nick);
+      setNeedsFirstNickname(false);
+      onClose();
+    } catch {
+      setError('Không thể lưu biệt danh lúc này. Vui lòng thử lại.');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const handleGoogleSignIn = async () => {
@@ -153,31 +272,40 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setInfo('');
     setSuggestRegister(false);
 
-    // If not already in awaitingVerification screen, require nickname
-    let nickname = displayName.trim();
-    if (!awaitingVerification) {
-      const valid = validateNickname();
-      if (!valid) return;
-      nickname = valid;
-    } else {
-      nickname =
-        nickname ||
-        localStorage.getItem('candy_pending_nickname') ||
-        '';
-    }
+    const pendingFromVerification = awaitingVerification
+      ? displayName.trim() || localStorage.getItem('candy_pending_nickname') || ''
+      : '';
 
     setAwaitingVerification(false);
     setBusy(true);
     try {
-      if (nickname) {
-        localStorage.setItem('candy_pending_nickname', nickname);
+      if (pendingFromVerification) {
+        try {
+          localStorage.setItem('candy_pending_nickname', pendingFromVerification);
+        } catch {
+          // ignore
+        }
       }
       const cred = await signInWithPopup(auth, googleProvider);
-      if (nickname) {
-        await updateProfile(cred.user, { displayName: nickname }).catch(() => {});
-        localStorage.setItem(`candy_nickname_${cred.user.uid}`, nickname);
+      const isNewUser = Boolean(getAdditionalUserInfo(cred)?.isNewUser);
+      const savedNick =
+        pendingFromVerification || (await resolveExistingNickname(cred.user, isNewUser));
+
+      if (!savedNick) {
+        setDisplayName('');
+        setNeedsFirstNickname(true);
+        return;
       }
-      onRefreshAuth(nickname || undefined);
+
+      try {
+        localStorage.setItem(`candy_nickname_${cred.user.uid}`, savedNick);
+      } catch {
+        // ignore
+      }
+      if ((cred.user.displayName || '').trim() !== savedNick) {
+        await updateProfile(cred.user, { displayName: savedNick }).catch(() => {});
+      }
+      onRefreshAuth(savedNick);
       onClose();
     } catch (err) {
       const code = (err as { code?: string })?.code || '';
@@ -263,45 +391,92 @@ export const AuthModal: React.FC<AuthModalProps> = ({
     setSuggestRegister(false);
     setAwaitingVerification(false);
 
-    const nickname = validateNickname();
-    if (!nickname) return;
-
     const cleanEmail = email.trim();
-    if (!cleanEmail || !password) {
-      setError('Vui lòng nhập đầy đủ Biệt danh, Gmail và mật khẩu.');
-      return;
-    }
 
-    setBusy(true);
-    try {
-      localStorage.setItem('candy_pending_nickname', nickname);
-      if (mode === 'login') {
-        const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
-        await updateProfile(cred.user, { displayName: nickname }).catch(() => {});
-        localStorage.setItem(`candy_nickname_${cred.user.uid}`, nickname);
-        await cred.user.reload().catch(() => {});
-        if (!cred.user.emailVerified) {
-          await sendEmailVerification(cred.user).catch(() => {});
-          setAwaitingVerification(true);
-          setInfo(
-            `Tài khoản ${cleanEmail} chưa xác minh email. Một liên kết xác minh đã được gửi tới Gmail của bạn (kiểm tra cả mục Thư rác / Spam).`
-          );
-          return;
+    if (mode === 'register') {
+      const nickname = validateNickname('Vui lòng nhập biệt danh khi đăng ký.');
+      if (!nickname) return;
+
+      if (!cleanEmail || !password) {
+        setError('Vui lòng nhập đầy đủ Biệt danh, Gmail và mật khẩu.');
+        return;
+      }
+
+      setBusy(true);
+      try {
+        try {
+          localStorage.setItem('candy_pending_nickname', nickname);
+        } catch {
+          // ignore
         }
-        await cred.user.getIdToken(true).catch(() => {});
-        onRefreshAuth(nickname);
-        onClose();
-      } else {
         const cred = await createUserWithEmailAndPassword(auth, cleanEmail, password);
         await updateProfile(cred.user, { displayName: nickname }).catch(() => {});
-        localStorage.setItem(`candy_nickname_${cred.user.uid}`, nickname);
+        try {
+          localStorage.setItem(`candy_nickname_${cred.user.uid}`, nickname);
+        } catch {
+          // ignore
+        }
         await sendEmailVerification(cred.user).catch(() => {});
         onRefreshAuth(nickname);
         setAwaitingVerification(true);
         setInfo(
           `Đăng ký thành công! Vui lòng mở hộp thư ${cleanEmail} (kiểm tra cả Thư rác / Spam) bấm vào liên kết xác minh rồi bấm "Tôi đã xác minh email" bên dưới.`
         );
+      } catch (err) {
+        const code = (err as { code?: string })?.code || '';
+        if (code === 'auth/operation-not-allowed' || code === 'auth/configuration-not-found') {
+          setError(
+            'Phương thức Email/Mật khẩu chưa được bật trong Firebase Console. Hãy bật Email/Password trong Firebase Authentication hoặc dùng nút Đăng nhập bằng Google.'
+          );
+        } else if (code === 'auth/email-already-in-use') {
+          setError('Gmail này đã được đăng ký. Hãy chuyển sang Đăng nhập.');
+        } else if (code === 'auth/weak-password') {
+          setError('Mật khẩu cần ít nhất 6 ký tự.');
+        } else {
+          setError('Đăng ký thất bại. Vui lòng kiểm tra lại thông tin.');
+        }
+      } finally {
+        setBusy(false);
       }
+      return;
+    }
+
+    if (!cleanEmail || !password) {
+      setError('Vui lòng nhập đầy đủ Gmail và mật khẩu.');
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const cred = await signInWithEmailAndPassword(auth, cleanEmail, password);
+      await cred.user.reload().catch(() => {});
+      if (!cred.user.emailVerified) {
+        await sendEmailVerification(cred.user).catch(() => {});
+        setAwaitingVerification(true);
+        setInfo(
+          `Tài khoản ${cleanEmail} chưa xác minh email. Một liên kết xác minh đã được gửi tới Gmail của bạn (kiểm tra cả mục Thư rác / Spam).`
+        );
+        return;
+      }
+      await cred.user.getIdToken(true).catch(() => {});
+
+      const savedNick = await resolveExistingNickname(cred.user, false);
+      if (!savedNick) {
+        setDisplayName('');
+        setNeedsFirstNickname(true);
+        return;
+      }
+
+      try {
+        localStorage.setItem(`candy_nickname_${cred.user.uid}`, savedNick);
+      } catch {
+        // ignore
+      }
+      if ((cred.user.displayName || '').trim() !== savedNick) {
+        await updateProfile(cred.user, { displayName: savedNick }).catch(() => {});
+      }
+      onRefreshAuth(savedNick);
+      onClose();
     } catch (err) {
       const code = (err as { code?: string })?.code || '';
       if (code === 'auth/operation-not-allowed' || code === 'auth/configuration-not-found') {
@@ -316,10 +491,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({
           'Tài khoản chưa đăng ký hoặc mật khẩu chưa đúng. Nếu bạn chưa có tài khoản, vui lòng đăng ký ngay.'
         );
         setSuggestRegister(true);
-      } else if (code === 'auth/email-already-in-use') {
-        setError('Gmail này đã được đăng ký. Hãy chuyển sang Đăng nhập.');
-      } else if (code === 'auth/weak-password') {
-        setError('Mật khẩu cần ít nhất 6 ký tự.');
       } else {
         setError('Đăng nhập thất bại. Vui lòng kiểm tra lại thông tin.');
       }
@@ -338,7 +509,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       <div className="relative w-full max-w-md rounded-3xl border border-[#E2A6BA]/45 bg-[#FFF0F5] p-6 text-[#3A071F] shadow-2xl sm:p-8">
         <button
           type="button"
-          onClick={onClose}
+          onClick={handleCloseModal}
           aria-label="Đóng"
           className="absolute top-4 right-4 flex h-10 w-10 cursor-pointer items-center justify-center rounded-full text-[#6F1F3B] hover:bg-[#E2A6BA]/30"
         >
@@ -348,11 +519,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         <h2 id="auth-dialog-title" className="font-cute mb-5 text-2xl font-bold text-[#3A071F]">
           {awaitingVerification
             ? 'Xác Minh Gmail'
-            : mode === 'login'
-              ? 'Đăng Nhập'
-              : mode === 'register'
-                ? 'Đăng Ký Tài Khoản'
-                : 'Quên Mật Khẩu'}
+            : needsFirstNickname
+              ? 'Đặt Biệt Danh'
+              : mode === 'login'
+                ? 'Đăng Nhập'
+                : mode === 'register'
+                  ? 'Đăng Ký Tài Khoản'
+                  : 'Quên Mật Khẩu'}
         </h2>
 
         {awaitingVerification ? (
@@ -410,6 +583,52 @@ export const AuthModal: React.FC<AuthModalProps> = ({
               </button>
             </div>
           </div>
+        ) : needsFirstNickname ? (
+          <form onSubmit={handleSaveFirstNickname} className="space-y-4">
+            <p className="text-xs leading-relaxed text-[#6F1F3B]">
+              Tài khoản chưa có biệt danh. Vui lòng nhập biệt danh hiển thị (chỉ cần nhập một lần, hệ thống tự động lưu cho các lần đăng nhập sau).
+            </p>
+
+            <div>
+              <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
+                Biệt danh <span className="text-[#E11D48]">*</span>
+              </label>
+              <input
+                type="text"
+                name="nickname"
+                autoComplete="off"
+                required
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                maxLength={80}
+                className="min-h-[44px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3.5 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
+              />
+            </div>
+
+            {error && (
+              <div className="rounded-xl bg-[#6F1F3B]/10 px-3 py-2.5 text-xs font-semibold text-[#6F1F3B]">
+                {error}
+              </div>
+            )}
+
+            <button
+              type="submit"
+              disabled={busy}
+              className="min-h-[44px] w-full cursor-pointer rounded-full bg-[#6F1F3B] px-5 py-2.5 text-sm font-bold text-[#FFF0F5] transition-colors hover:bg-[#3A071F] disabled:opacity-60"
+            >
+              {busy ? 'Đang lưu...' : 'Lưu biệt danh & Tiếp tục'}
+            </button>
+
+            <button
+              type="button"
+              disabled={busy}
+              onClick={handleSwitchAccount}
+              className="inline-flex min-h-[40px] w-full cursor-pointer items-center justify-center gap-1.5 text-xs font-semibold text-[#6F1F3B] underline underline-offset-4 hover:text-[#3A071F]"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+              <span>Đăng xuất / Dùng tài khoản khác</span>
+            </button>
+          </form>
         ) : mode === 'forgot' ? (
           <div className="space-y-4">
             <p className="text-xs text-[#6F1F3B]/90">
@@ -510,21 +729,23 @@ export const AuthModal: React.FC<AuthModalProps> = ({
         ) : (
           <>
             <form onSubmit={handleEmailAuth} className="space-y-3.5">
-              <div>
-                <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
-                  Biệt danh <span className="text-[#E11D48]">*</span>
-                </label>
-                <input
-                  type="text"
-                  name="nickname"
-                  autoComplete="off"
-                  required
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  maxLength={80}
-                  className="min-h-[44px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3.5 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
-                />
-              </div>
+              {mode === 'register' && (
+                <div>
+                  <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
+                    Biệt danh <span className="text-[#E11D48]">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    name="nickname"
+                    autoComplete="off"
+                    required
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    maxLength={80}
+                    className="min-h-[44px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3.5 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
+                  />
+                </div>
+              )}
 
               <div>
                 <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">Gmail</label>

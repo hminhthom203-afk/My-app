@@ -38,7 +38,7 @@ service cloud.firestore {
         'createdAt', 'updatedAt'
       ])
       && data.keys().hasOnly([
-        'name', 'avatar', 'hashtags', 'slogan', 'story',
+        'name', 'avatar', 'hashtags', 'slogan', 'info', 'story',
         'link', 'linkLabel', 'passcode', 'passcodeHint',
         'likesCount', 'viewsCount', 'createdAt', 'updatedAt'
       ])
@@ -47,6 +47,7 @@ service cloud.firestore {
       && data.hashtags is list && data.hashtags.size() <= 10
       && (data.hashtags.size() == 0 || (data.hashtags[0] is string && data.hashtags[0].size() >= 1 && data.hashtags[0].size() <= 40))
       && data.slogan is string && data.slogan.size() >= 1 && data.slogan.size() <= 200
+      && (!('info' in data) || data.info is string)
       && data.story is string && data.story.size() >= 1 && data.story.size() <= 5000
       && data.link is string && data.link.size() <= 500
       && data.linkLabel is string && data.linkLabel.size() <= 80
@@ -195,7 +196,7 @@ service cloud.firestore {
         (
           isAdmin()
           && incoming().diff(existing()).affectedKeys().hasOnly([
-            'name', 'avatar', 'hashtags', 'slogan', 'story', 'link', 'linkLabel', 'passcode', 'passcodeHint', 'updatedAt'
+            'name', 'avatar', 'hashtags', 'slogan', 'info', 'story', 'link', 'linkLabel', 'passcode', 'passcodeHint', 'updatedAt'
           ])
           && incoming().createdAt == existing().createdAt
           && incoming().likesCount == existing().likesCount

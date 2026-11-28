@@ -27,6 +27,7 @@ export interface Character {
   avatar: string;
   hashtags: string[];
   slogan: string;
+  info?: string;
   story: string;
   link: string;
   linkLabel: string;

@@ -177,37 +177,42 @@ export default function App() {
     }
 
     const fbDisplay = (fbUser.displayName || '').trim();
+    const isGoogleProvider = fbUser.providerData.some((p) => p?.providerId === 'google.com');
 
     let resolvedName =
       pendingNick ||
       cachedUidNick ||
-      fbDisplay ||
-      (isAdmin ? 'Chủ Tiệm Kẹo' : 'Thành viên');
+      (!isGoogleProvider ? fbDisplay : '') ||
+      (isAdmin ? fbDisplay || 'Chủ Tiệm Kẹo' : '');
 
     if (fbUser.emailVerified && !isAdmin) {
       const userRef = doc(db, 'users', fbUser.uid);
       try {
         const snap = await getDoc(userRef);
         if (!snap.exists()) {
-          await setDoc(userRef, {
-            uid: fbUser.uid,
-            name: resolvedName.slice(0, 80),
-            email: email.slice(0, 160),
-            role: 'viewer',
-            createdAt: serverTimestamp(),
-            updatedAt: serverTimestamp(),
-          });
+          if (resolvedName) {
+            await setDoc(userRef, {
+              uid: fbUser.uid,
+              name: resolvedName.slice(0, 80),
+              email: email.slice(0, 160),
+              role: 'viewer',
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp(),
+            });
+          }
         } else {
           const existingName = String(snap.data()?.name || '').trim();
           if (pendingNick) {
             resolvedName = pendingNick;
-            await updateDoc(userRef, {
-              name: resolvedName.slice(0, 80),
-              updatedAt: serverTimestamp(),
-            });
+            if (existingName !== resolvedName.slice(0, 80)) {
+              await updateDoc(userRef, {
+                name: resolvedName.slice(0, 80),
+                updatedAt: serverTimestamp(),
+              });
+            }
           } else if (existingName) {
             resolvedName = existingName;
-          } else {
+          } else if (resolvedName) {
             await updateDoc(userRef, {
               name: resolvedName.slice(0, 80),
               updatedAt: serverTimestamp(),
@@ -228,22 +233,28 @@ export default function App() {
       if (resolvedName && resolvedName !== 'Thành viên') {
         localStorage.setItem(`candy_nickname_${fbUser.uid}`, resolvedName.slice(0, 80));
       }
-      if (pendingNick) {
+      if (pendingNick && fbUser.emailVerified) {
         localStorage.removeItem('candy_pending_nickname');
       }
     } catch {
       // ignore storage failure
     }
 
+    const finalName = (resolvedName || (isAdmin ? 'Chủ Tiệm Kẹo' : 'Thành viên')).slice(0, 80);
+
     const profile: UserProfile = {
       uid: fbUser.uid,
-      name: resolvedName.slice(0, 80),
+      name: finalName,
       email,
       emailVerified: fbUser.emailVerified,
       role: isAdmin ? 'admin' : 'viewer',
     };
     setCurrentUser(profile);
     setAuthReady(true);
+
+    if (fbUser.emailVerified && !isAdmin && !resolvedName) {
+      setAuthModalOpen(true);
+    }
   };
 
   // 1. Firebase Auth listener
@@ -268,6 +279,7 @@ export default function App() {
             avatar: String(data.avatar || ''),
             hashtags: Array.isArray(data.hashtags) ? data.hashtags.map(String) : [],
             slogan: String(data.slogan || ''),
+            info: typeof data.info === 'string' ? data.info : '',
             story: String(data.story || ''),
             link: String(data.link || ''),
             linkLabel: String(data.linkLabel || 'Mua Kẹo Ở Đây'),
@@ -1029,12 +1041,14 @@ export default function App() {
     avatar: string;
     hashtags: string[];
     slogan: string;
+    info?: string;
     story: string;
     link: string;
     linkLabel: string;
   }) => {
     setActionError(null);
     const normalizedAvatar = normalizeMediaUrl(input.avatar, 'image').slice(0, 200000);
+    const infoValue = typeof input.info === 'string' ? input.info : '';
     if (input.id) {
       const path = `characters/${input.id}`;
       try {
@@ -1043,6 +1057,7 @@ export default function App() {
           avatar: normalizedAvatar,
           hashtags: input.hashtags,
           slogan: input.slogan,
+          info: infoValue,
           story: input.story,
           link: input.link,
           linkLabel: input.linkLabel,
@@ -1067,6 +1082,7 @@ export default function App() {
           avatar: normalizedAvatar,
           hashtags: input.hashtags,
           slogan: input.slogan,
+          info: infoValue,
           story: input.story,
           link: input.link,
           linkLabel: input.linkLabel,
@@ -1572,7 +1588,7 @@ export default function App() {
               <div className="inline-flex items-center gap-3 rounded-full border border-[#B65A7C]/25 bg-white/80 px-5 py-1.5 shadow-sm backdrop-blur-sm">
                 <span aria-hidden="true" className="hidden h-px w-5 bg-[#B65A7C]/60 sm:block" />
                 <p className="text-xs font-semibold text-[#5E1131] sm:text-sm">
-                  Giữa muôn vàn cuộc gặp gỡ ngoài kia, cảm ơn bạn vì đã ghé qua nơi này
+                  Giữa muôn vàn cuộc gặp gỡ ngoài kia, cảm ơn vì bạn đã ghé qua nơi này 🌷❤️
                 </p>
                 <span aria-hidden="true" className="hidden h-px w-5 bg-[#B65A7C]/60 sm:block" />
               </div>

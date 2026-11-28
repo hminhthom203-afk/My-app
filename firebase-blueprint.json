@@ -27,6 +27,10 @@
           "maxLength": 200,
           "description": "Character signature slogan."
         },
+        "info": {
+          "type": "string",
+          "description": "Character info section displayed above story with no character limit."
+        },
         "story": {
           "type": "string",
           "minLength": 1,

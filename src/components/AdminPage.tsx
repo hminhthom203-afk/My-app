@@ -42,6 +42,7 @@ interface CharacterFormInput {
   avatar: string;
   hashtags: string[];
   slogan: string;
+  info?: string;
   story: string;
   link: string;
   linkLabel: string;
@@ -110,6 +111,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
   const [charAvatar, setCharAvatar] = useState('');
   const [charHashtags, setCharHashtags] = useState('');
   const [charSlogan, setCharSlogan] = useState('');
+  const [charInfo, setCharInfo] = useState('');
   const [charStory, setCharStory] = useState('');
   const [charLink, setCharLink] = useState('');
   const [charPasscode, setCharPasscode] = useState('');
@@ -139,6 +141,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     setCharAvatar('');
     setCharHashtags('');
     setCharSlogan('');
+    setCharInfo('');
     setCharStory('');
     setCharLink('');
     setCharPasscode('');
@@ -164,6 +167,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
     setCharAvatar(c.avatar);
     setCharHashtags(c.hashtags.join(', '));
     setCharSlogan(c.slogan);
+    setCharInfo(c.info || '');
     setCharStory(c.story);
     setCharLink(c.link);
     setCharPasscode(c.passcode || '');
@@ -217,6 +221,7 @@ export const AdminPage: React.FC<AdminPageProps> = ({
         avatar: normalizeMediaUrl(charAvatar, 'image').slice(0, 200000),
         hashtags: parsedTags,
         slogan: charSlogan.trim().slice(0, 200),
+        info: charInfo.trim(),
         story:
           charStory.trim().slice(0, 5000) ||
           'Câu chuyện đang được viết tiếp tại khu vườn Ăn Kẹo Hong.',
@@ -503,6 +508,18 @@ export const AdminPage: React.FC<AdminPageProps> = ({
             value={charSlogan}
             onChange={(e) => setCharSlogan(e.target.value)}
             className="min-h-[42px] w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
+          />
+        </div>
+
+        <div>
+          <label className="mb-1 block text-xs font-semibold text-[#6F1F3B]">
+            Thông tin
+          </label>
+          <textarea
+            rows={4}
+            value={charInfo}
+            onChange={(e) => setCharInfo(e.target.value)}
+            className="w-full rounded-xl border border-[#B65A7C]/30 bg-white px-3 py-2 text-sm text-[#3A071F] focus:border-[#6F1F3B] focus:outline-none"
           />
         </div>
 

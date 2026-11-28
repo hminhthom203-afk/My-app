@@ -9,6 +9,7 @@ import {
   Check,
   X,
   BookOpen,
+  Info,
   ShoppingBag,
   ChevronDown,
 } from 'lucide-react';
@@ -166,6 +167,18 @@ export const CharacterDetailPage: React.FC<CharacterDetailPageProps> = ({
             <p className={`mb-6 rounded-2xl px-3.5 py-2 text-xs leading-relaxed font-semibold italic ${SLOGAN_BOX_CLASS}`}>
               “{character.slogan}”
             </p>
+
+            {character.info && character.info.trim() && (
+              <div className="mb-6 text-left">
+                <h2 className="font-cute mb-2.5 flex items-center justify-start gap-2 text-lg font-bold text-[#3A071F]">
+                  <Info className="h-4 w-4 text-[#B65A7C]" />
+                  <span>Thông tin</span>
+                </h2>
+                <div className="whitespace-pre-line break-words text-left text-sm leading-relaxed text-[#3A071F]/90 sm:text-base">
+                  {character.info}
+                </div>
+              </div>
+            )}
 
             <div className="mb-6">
               <h2 className="font-cute mb-2.5 flex items-center justify-center gap-2 text-lg font-bold text-[#3A071F] md:justify-start">
